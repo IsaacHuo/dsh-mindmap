@@ -1,7 +1,8 @@
 name: Release
 
 # Runs only when a maintainer pushes a version tag (v0.1.0, v0.2.0-rc.1, ...).
-# Requires the repository secret NPM_TOKEN (npm automation token).
+# Requires the repository secret NPM_TOKEN (npm automation token) unless the
+# version was already published by hand; publishing is skipped in that case.
 on:
   push:
     tags: ['v*']
@@ -30,6 +31,8 @@ jobs:
       - run: npm run pack:check
       - name: Publish to npm
         run: |
+          name="$(node -p "require('./package.json').name")"; v="$(node -p "require('./package.json').version")"
+          if npm view "$name@$v" version >/dev/null 2>&1; then echo "$name@$v already on npm, skipping publish"; exit 0; fi
           if echo "${GITHUB_REF_NAME}" | grep -q -- '-'; then tag=next; else tag=latest; fi
           npm publish --provenance --access public --tag "$tag"
         env:
