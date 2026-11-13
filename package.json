@@ -1,6 +1,6 @@
 {
   "name": "@huoweifang/dsh-mindmap",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Outline notes with a live mind-map view for the DeepSeek Harness (DSH) web GUI. Local JSON storage, autosave, backups, Markdown/OPML import and export. No AI, no cloud, no runtime dependencies.",
   "type": "module",
   "main": "lib/index.js",

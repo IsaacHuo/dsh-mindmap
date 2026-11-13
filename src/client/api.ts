@@ -2,9 +2,10 @@
  * Browser-side client for /dsh-mindmap/api (same origin as the DSH GUI).
  * @module dsh-mindmap/client/api
  */
-import { ROUTE_PREFIX, type ApiErrorCode, type ApiResult, type BackupInfo, type CreateDocBody, type PatchMetaBody } from '../shared/api.ts'
+import { ROUTE_PREFIX, type ApiErrorCode, type ApiResult, type BackupInfo, type CreateDocBody, type LibraryResponse, type PatchMetaBody, type QuarantinedFile } from '../shared/api.ts'
 import type { DocMeta, Folder, Library, OutlineDoc } from '../shared/model.ts'
 import type { SearchHit } from '../shared/search.ts'
+import { broadcast } from './sync.ts'
 
 /** Failed API call. */
 export class ApiError extends Error {
@@ -33,11 +34,13 @@ async function call<T>(path: string, body?: unknown, init: { keepalive?: boolean
     throw new ApiError('internal', `服务返回了无效响应 (HTTP ${res.status})`)
   }
   if (!parsed.ok) throw new ApiError(parsed.error.code, parsed.error.message, parsed.error.current)
+  // Every mutation except a plain save changes the library; tell other tabs.
+  if (body !== undefined && !path.endsWith('/save')) broadcast({ kind: 'library' })
   return parsed.value
 }
 
 export const api = {
-  library: () => call<{ library: Library; warnings: string[] }>('/library'),
+  library: () => call<LibraryResponse>('/library'),
   doc: (id: string) => call<OutlineDoc>(`/docs/${id}`),
   createDoc: (body: CreateDocBody) => call<{ meta: DocMeta; doc: OutlineDoc }>('/docs', body),
   saveDoc: (doc: OutlineDoc, baseRevision: number, keepalive = false) => call<OutlineDoc>(`/docs/${doc.id}/save`, { doc, baseRevision }, { keepalive }),
@@ -45,7 +48,10 @@ export const api = {
   trash: (id: string) => call<DocMeta>(`/docs/${id}/trash`, {}),
   restore: (id: string) => call<DocMeta>(`/docs/${id}/restore`, {}),
   purge: (id: string) => call<null>(`/docs/${id}/purge`, {}),
-  createFolder: (name: string) => call<Folder>('/folders', { name }),
+  emptyTrash: () => call<{ purged: number }>('/trash/empty', {}),
+  createFolder: (name: string, parentId: string | null = null) => call<Folder>('/folders', { name, parentId }),
+  moveFolder: (id: string, parentId: string | null) => call<Folder>(`/folders/${id}/move`, { parentId }),
+  quarantine: () => call<QuarantinedFile[]>('/health/quarantine'),
   renameFolder: (id: string, name: string) => call<Folder>(`/folders/${id}/rename`, { name }),
   deleteFolder: (id: string) => call<null>(`/folders/${id}/delete`, {}),
   search: (q: string) => call<SearchHit[]>('/search?q=' + encodeURIComponent(q)),

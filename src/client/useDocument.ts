@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OutlineDoc } from '../shared/model.ts'
 import { History, type Selection } from '../shared/history.ts'
 import { api, ApiError } from './api.ts'
+import { broadcast, onBroadcast } from './sync.ts'
 
 /** Debounce before an autosave. */
 export const SAVE_DELAY_MS = 800
@@ -94,6 +95,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
         const saved = await api.saveDoc(body, box.rev, small)
         box.rev = saved.revision
         onSavedRef.current(saved)
+        broadcast({ kind: 'doc', docId: saved.id, revision: saved.revision })
         if (baseRev.current !== box) return
         retry.current = 0
         setStatusMessage(null)
@@ -175,6 +177,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
             const saved = await api.saveDoc({ ...closing, revision: box.rev }, box.rev, JSON.stringify(closing).length < KEEPALIVE_LIMIT)
             box.rev = saved.revision
             onSavedRef.current(saved)
+            broadcast({ kind: 'doc', docId: saved.id, revision: saved.revision })
           } catch (error) {
             console.warn('[dsh-mindmap] flush on close failed:', error)
           }
@@ -196,6 +199,38 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
       window.removeEventListener('beforeunload', hide)
     }
   }, [runSave])
+
+  // Pick up another tab's saved edits while this copy is clean: on a
+  // broadcast from that tab, and whenever this tab becomes visible again.
+  // A dirty copy is left alone; its next save meets the 409 flow instead.
+  useEffect(() => {
+    if (docId === null) return
+    let alive = true
+    const idle = (): boolean => !dirty.current && !blocked.current && saving.current === null && docRef.current !== null
+    const check = async (rev?: number): Promise<void> => {
+      if (!idle() || (rev !== undefined && rev <= baseRev.current.rev)) return
+      try {
+        const fresh = await api.doc(docId)
+        if (!alive || !idle() || fresh.id !== docRef.current?.id || fresh.revision <= baseRev.current.rev) return
+        baseRev.current.rev = fresh.revision
+        history.current.clear()
+        docRef.current = fresh
+        setDoc(fresh)
+        onSavedRef.current(fresh)
+        setTick(t => t + 1)
+      } catch (error) {
+        console.warn('[dsh-mindmap] refetch failed:', error)
+      }
+    }
+    const off = onBroadcast(m => { if (m.kind === 'doc' && m.docId === docId) void check(m.revision) })
+    const visible = (): void => { if (document.visibilityState === 'visible') void check() }
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      alive = false
+      off()
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [docId, reloadKey])
 
   const commit = useCallback((next: OutlineDoc) => {
     docRef.current = next

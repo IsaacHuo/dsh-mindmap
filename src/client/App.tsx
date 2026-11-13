@@ -4,24 +4,24 @@
  * @module dsh-mindmap/client/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ancestors, isInSubtree, type DocMeta, type Library, type OutlineDoc } from '../shared/model.ts'
+import { ancestors, flatten, isInSubtree, type Library, type OutlineDoc } from '../shared/model.ts'
 import * as ops from '../shared/ops.ts'
 import { parseMarkdown, toMarkdown } from '../shared/markdown.ts'
 import { parseOpml, toOpml } from '../shared/opml.ts'
-import type { BackupInfo } from '../shared/api.ts'
-import type { SearchHit } from '../shared/search.ts'
+import type { BackupInfo, BackupKind, QuarantinedFile } from '../shared/api.ts'
 import { api } from './api.ts'
+import { onBroadcast } from './sync.ts'
+import { countTree } from './docUtils.ts'
+import { Sidebar } from './Sidebar.tsx'
 import { useDocument } from './useDocument.ts'
 import { Outline } from './Outline.tsx'
 import { MindMap } from './MindMap.tsx'
-import { renderInline } from './inline.tsx'
-import { canvasMeasure, layoutMap, mapToSvg, svgToPng, themeColors } from './mapLayout.ts'
-import { DialogHost, download, fileName, Icon, PopupMenu, relTime, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
+import { buildMapExport, MapTooLargeError, pngFits, svgToPng } from './mapLayout.ts'
+import { DialogHost, download, fileName, Icon, PopupMenu, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
 
 type ViewMode = 'outline' | 'map'
 const LS_LAST = 'dsh-mindmap:last-doc'
 const LS_VIEW = 'dsh-mindmap:view'
-const LS_FOLDERS = 'dsh-mindmap:open-folders'
 
 function lsGet(key: string): string | null {
   try { return window.localStorage.getItem(key) } catch { return null }
@@ -62,6 +62,8 @@ function Shell(): ReactNode {
     }
   }, [dialogs])
   useEffect(() => { void refreshLibrary() }, [refreshLibrary])
+  // Another tab changed the library (or saved a document): refresh the index.
+  useEffect(() => onBroadcast(() => { void refreshLibrary() }), [refreshLibrary])
 
   // Open the most recently edited doc when none is selected or the remembered one is gone.
   useEffect(() => {
@@ -85,6 +87,21 @@ function Shell(): ReactNode {
   const effectiveRoot = doc !== null && rootId !== null && doc.nodes[rootId] !== undefined ? rootId : doc?.rootId ?? null
 
   const setView = (v: ViewMode): void => { setViewState(v); lsSet(LS_VIEW, v) }
+
+  // Undo / redo may restore a node outside the zoomed subtree: zoom out so it is visible.
+  useEffect(() => {
+    const f = state.focus
+    if (doc === null || f === null || rootId === null || doc.nodes[f.id] === undefined) return
+    if (!isInSubtree(doc, rootId, f.id)) setRootId(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.focus])
+
+  const [findRequest, setFindRequest] = useState(0)
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  useEffect(() => { setTagFilter(null) }, [activeId])
+  const showShortcuts = useCallback(() => {
+    dialogs.show({ title: '快捷键', body: () => <ShortcutPanel /> })
+  }, [dialogs])
 
   // Reveal a node (expand its ancestors, fix the zoom) and put the caret in it.
   const reveal = useCallback((d: OutlineDoc, id: string) => {
@@ -150,11 +167,29 @@ function Shell(): ReactNode {
       if (id === activeId) await state.flush()
       const meta = await api.trash(id)
       setLibrary(lib => (lib === null ? lib : { ...lib, docs: lib.docs.map(d => (d.id === id ? meta : d)) }))
-      dialogs.toast('已移到回收站')
+      dialogs.toast('已移到回收站（30 天后自动永久删除）', { label: '撤销', onClick: () => {
+        api.restore(id).then(m => setLibrary(lib => (lib === null ? lib : { ...lib, docs: lib.docs.map(d => (d.id === id ? m : d)) })), error => dialogs.toast('恢复失败：' + errText(error)))
+      } })
     } catch (error) {
       dialogs.toast('删除失败：' + errText(error))
     }
   }, [activeId, state, dialogs])
+
+  // ---------- conflict: keep both ----------
+  const saveConflictCopy = useCallback(async () => {
+    const mine = state.doc
+    if (mine === null) return
+    const meta = library?.docs.find(d => d.id === mine.id)
+    try {
+      const r = await api.createDoc({ copy: mine, title: mine.title + ' 副本', folderId: meta?.folderId ?? null })
+      state.resolveConflict('theirs')
+      setLibrary(lib => (lib === null ? lib : { ...lib, docs: [...lib.docs, r.meta] }))
+      setActiveId(r.meta.id)
+      dialogs.toast('你的修改已另存为「' + r.meta.title + '」')
+    } catch (error) {
+      dialogs.toast('另存失败：' + errText(error))
+    }
+  }, [state, library, dialogs])
 
   // ---------- export ----------
   const exportAs = useCallback(async (kind: 'md' | 'opml' | 'svg' | 'png' | 'copy-md') => {
@@ -170,16 +205,34 @@ function Shell(): ReactNode {
         download(fileName(label, 'opml'), new Blob([toOpml(doc, root, label)], { type: 'text/x-opml;charset=utf-8' }))
       } else {
         const el = appRef.current!
-        const colors = themeColors(el)
-        const layout = layoutMap(doc, root, label, canvasMeasure(colors.font))
-        const out = mapToSvg(layout, colors)
-        if (kind === 'svg') download(fileName(label, 'svg'), new Blob([out.svg], { type: 'image/svg+xml;charset=utf-8' }))
-        else download(fileName(label, 'png'), await svgToPng(out.svg, out.width, out.height, 2))
+        const out = buildMapExport(doc, root, label, el, { title: null, background: kind === 'png' ? 'theme' : 'transparent' })
+        const svgBlob = (): Blob => new Blob([out.svg], { type: 'image/svg+xml;charset=utf-8' })
+        if (kind === 'svg') { download(fileName(label, 'svg'), svgBlob()); return }
+        const offerSvg = async (): Promise<void> => {
+          const yes = await dialogs.confirm({ title: '导图过大，无法导出 PNG', message: '尺寸超过浏览器画布上限，改为导出 SVG？', ok: '导出 SVG' })
+          if (yes) download(fileName(label, 'svg'), svgBlob())
+        }
+        if (!pngFits(out.width, out.height, 2)) { await offerSvg(); return }
+        try {
+          download(fileName(label, 'png'), await svgToPng(out.svg, out.width, out.height, 2))
+        } catch (error) {
+          if (error instanceof MapTooLargeError) { await offerSvg(); return }
+          throw error
+        }
       }
     } catch (error) {
       dialogs.toast('导出失败：' + errText(error))
     }
   }, [doc, effectiveRoot, dialogs])
+
+  const exportItems = (): MenuEntry[] => doc === null ? [] : [
+    { kind: 'label', label: effectiveRoot !== doc.rootId ? '导出当前聚焦的节点' : '导出整篇文档' },
+    { label: '导出 Markdown (.md)', onSelect: () => void exportAs('md') },
+    { label: '导出 OPML (.opml)', onSelect: () => void exportAs('opml') },
+    { label: '导出图片 (.png)', onSelect: () => void exportAs('png') },
+    { label: '导出矢量图 (.svg)', onSelect: () => void exportAs('svg') },
+    { label: '复制为 Markdown', onSelect: () => void exportAs('copy-md') },
+  ]
 
   // ---------- import ----------
   const fileInput = useRef<HTMLInputElement>(null)
@@ -213,8 +266,17 @@ function Shell(): ReactNode {
   // Undo / redo when the focus is not inside a text field.
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const t = e.target as HTMLElement
-    if (t.closest('textarea,input,.mm-map,.mm-modal') !== null) return
     const mod = e.ctrlKey || e.metaKey
+    if (t.closest('.mm-modal') !== null) return
+    if (mod && !e.altKey && (e.key === '/' || e.code === 'Slash')) { e.preventDefault(); showShortcuts(); return }
+    if (mod && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F' || e.key === 'h' || e.key === 'H') && doc !== null && t.closest('.mm-side') === null) {
+      e.preventDefault()
+      setView('outline')
+      setFindRequest(n => n + 1)
+      return
+    }
+    if (t.closest('textarea,input,.mm-map') !== null) return
+    if (e.key === '?' && !mod) { e.preventDefault(); showShortcuts(); return }
     if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) state.redo(); else state.undo() }
     else if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); state.redo() }
   }
@@ -222,10 +284,23 @@ function Shell(): ReactNode {
   const statusText = state.status === 'saved' ? '已保存' : state.status === 'saving' ? '保存中…' : state.status === 'dirty' ? '未保存' : state.status === 'conflict' ? '保存冲突' : '保存失败'
   const meta = library?.docs.find(d => d.id === activeId)
 
+  // Keys typed while focus has fallen back to <body> (after clicking empty space)
+  // still reach the app's global shortcuts.
+  const keyRef = useRef(onKeyDown)
+  keyRef.current = onKeyDown
+  useEffect(() => {
+    const h = (e: KeyboardEvent): void => {
+      if (e.target !== document.body || appRef.current === null || !appRef.current.isConnected) return
+      keyRef.current(e as unknown as React.KeyboardEvent)
+    }
+    document.addEventListener('keydown', h)
+    return () => document.removeEventListener('keydown', h)
+  }, [])
+
   return (
     <div ref={appRef} className={'mm-app' + (sideOpen ? ' mm-side-open' : '')} onKeyDown={onKeyDown}>
       <div className="mm-scrim" onClick={() => setSideOpen(false)} />
-      <Sidebar library={library} error={libError} activeId={activeId} onOpen={openDoc} onCreate={folderId => void createDoc({ folderId })}
+      <Sidebar library={library} error={libError} activeId={activeId} onOpen={openDoc} onCreate={(folderId, markdown) => void createDoc(markdown === undefined ? { folderId } : { folderId, markdown })}
         onPatch={patchMeta} onTrash={trashDoc} onRefresh={refreshLibrary} onMenu={setMenu} onImport={() => fileInput.current?.click()} onBackups={openBackups}
         onChanged={setLibrary} />
       <input ref={fileInput} type="file" accept=".md,.markdown,.txt,.opml,.xml" multiple hidden onChange={e => { void importFiles(e.target.files); e.target.value = '' }} />
@@ -241,29 +316,28 @@ function Shell(): ReactNode {
               <span className="mm-sep" />
               <button type="button" className="mm-icon-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled={!state.canUndo} onMouseDown={e => e.preventDefault()} onClick={state.undo}><Icon name="undo" /></button>
               <button type="button" className="mm-icon-btn" title="重做 (Ctrl+Shift+Z)" aria-label="重做" disabled={!state.canRedo} onMouseDown={e => e.preventDefault()} onClick={state.redo}><Icon name="redo" /></button>
-              <button type="button" className="mm-icon-btn" title="全部展开" aria-label="全部展开" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true })}><Icon name="expand" /></button>
-              <button type="button" className="mm-icon-btn" title="全部折叠" aria-label="全部折叠" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true })}><Icon name="collapse" /></button>
+              <button type="button" className="mm-icon-btn mm-secondary" title="全部展开" aria-label="全部展开" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true })}><Icon name="expand" /></button>
+              <button type="button" className="mm-icon-btn mm-secondary" title="全部折叠" aria-label="全部折叠" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true })}><Icon name="collapse" /></button>
               <span className="mm-grow" />
               <span className={'mm-status' + (state.status === 'error' || state.status === 'conflict' ? ' mm-err' : '')} title={state.statusMessage ?? undefined} aria-live="polite">{statusText}</span>
-              <button type="button" className="mm-icon-btn" title="导出" aria-label="导出" onClick={e => {
+              <button type="button" className="mm-icon-btn mm-secondary" title="导出" aria-label="导出" onClick={e => {
                 const r = e.currentTarget.getBoundingClientRect()
-                setMenu({ x: r.right - 180, y: r.bottom + 4, items: [
-                  { kind: 'label', label: effectiveRoot !== doc.rootId ? '导出当前聚焦的节点' : '导出整篇文档' },
-                  { label: '导出 Markdown (.md)', onSelect: () => void exportAs('md') },
-                  { label: '导出 OPML (.opml)', onSelect: () => void exportAs('opml') },
-                  { label: '导出图片 (.png)', onSelect: () => void exportAs('png') },
-                  { label: '导出矢量图 (.svg)', onSelect: () => void exportAs('svg') },
-                  { kind: 'sep' },
-                  { label: '复制为 Markdown', onSelect: () => void exportAs('copy-md') },
-                ] })
+                setMenu({ x: r.right - 180, y: r.bottom + 4, items: exportItems() })
               }}><Icon name="download" /></button>
+              <button type="button" className="mm-icon-btn mm-secondary" title="快捷键 (Ctrl+/)" aria-label="快捷键" onClick={showShortcuts}><span aria-hidden="true" style={{ fontWeight: 600, fontSize: 14 }}>?</span></button>
               <button type="button" className="mm-icon-btn" title="更多" aria-label="更多" onClick={e => {
                 const r = e.currentTarget.getBoundingClientRect()
                 const m = meta
-                setMenu({ x: r.right - 180, y: r.bottom + 4, items: [
+                setMenu({ x: r.right - 200, y: r.bottom + 4, items: [
                   { label: m?.favorite === true ? '取消收藏' : '收藏', disabled: m === undefined, onSelect: () => m !== undefined && void patchMeta(m.id, { favorite: !m.favorite }) },
+                  { label: '查找和替换', shortcut: 'Ctrl+F', onSelect: () => { setView('outline'); setFindRequest(n => n + 1) } },
+                  { label: '全部展开', onSelect: () => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true }) },
+                  { label: '全部折叠', onSelect: () => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true }) },
                   { label: '立即保存', onSelect: () => void state.flush() },
                   { kind: 'sep' },
+                  ...exportItems(),
+                  { kind: 'sep' },
+                  { label: '快捷键', shortcut: 'Ctrl+/', onSelect: showShortcuts },
                   { label: '删除文档', danger: true, onSelect: () => void trashDoc(doc.id) },
                 ] })
               }}><Icon name="more" /></button>
@@ -273,8 +347,9 @@ function Shell(): ReactNode {
         {state.conflict !== null ? (
           <div className="mm-banner" role="alert">
             <span className="mm-grow">这篇文档在别处被修改过（例如另一个窗口）。你的修改尚未保存。</span>
-            <button type="button" className="mm-btn" onClick={() => state.resolveConflict('theirs')}>使用磁盘上的版本</button>
-            <button type="button" className="mm-btn mm-primary" onClick={() => state.resolveConflict('mine')}>保留我的修改</button>
+            <button type="button" className="mm-btn" onClick={() => state.resolveConflict('theirs')}>载入对方版本</button>
+            <button type="button" className="mm-btn" onClick={() => void saveConflictCopy()}>另存为副本</button>
+            <button type="button" className="mm-btn mm-primary" onClick={() => state.resolveConflict('mine')}>保留我的</button>
           </div>
         ) : null}
         {state.status === 'error' && state.statusMessage !== null ? <div className="mm-banner" role="alert"><span className="mm-grow">{state.statusMessage}</span><button type="button" className="mm-btn" onClick={() => void state.flush()}>重试</button></div> : null}
@@ -291,8 +366,14 @@ function Shell(): ReactNode {
           <div className="mm-doc">
             <div className="mm-doc-inner">
               <DocHeader doc={doc} rootId={effectiveRoot} state={state} onZoom={id => setRootId(id === doc.rootId ? null : id)} />
-              <Outline state={state} doc={doc} rootId={effectiveRoot} onZoom={id => setRootId(id === doc.rootId ? null : id)} onMenu={setMenu} />
+              <Outline state={state} doc={doc} rootId={effectiveRoot} onZoom={id => setRootId(id === doc.rootId ? null : id)} onMenu={setMenu}
+                findRequest={findRequest} tagFilter={tagFilter} onTagFilter={setTagFilter}
+                onFocusTitle={() => {
+                  const el = document.querySelector<HTMLTextAreaElement>('.mm-app .mm-title')
+                  if (el !== null) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
+                }} />
             </div>
+            <StatusBar doc={doc} rootId={effectiveRoot} />
           </div>
         ) : (
           <MindMap state={state} doc={doc} rootId={effectiveRoot} rootLabel={effectiveRoot === doc.rootId ? doc.title : doc.nodes[effectiveRoot]!.text}
@@ -369,210 +450,6 @@ function DocHeader(props: { doc: OutlineDoc; rootId: string; state: ReturnType<t
   )
 }
 
-/** Left document navigator. */
-function Sidebar(props: {
-  library: Library | null
-  error: string | null
-  activeId: string | null
-  onOpen(id: string, nodeId?: string | null): void
-  onCreate(folderId: string | null): void
-  onPatch(id: string, body: { title?: string; folderId?: string | null; favorite?: boolean }): Promise<void>
-  onTrash(id: string): Promise<void>
-  onRefresh(): Promise<Library | null>
-  onMenu(m: MenuState): void
-  onImport(): void
-  onBackups(): void
-  onChanged(lib: Library): void
-}): ReactNode {
-  const dialogs = useDialogs()
-  const [query, setQuery] = useState('')
-  const [hits, setHits] = useState<SearchHit[] | null>(null)
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [openFolders, setOpenFolders] = useState<Set<string>>(() => new Set((lsGet(LS_FOLDERS) ?? '').split(',').filter(Boolean)))
-  const [showTrash, setShowTrash] = useState(false)
-  const lib = props.library
-
-  useEffect(() => { lsSet(LS_FOLDERS, Array.from(openFolders).join(',')) }, [openFolders])
-  useEffect(() => {
-    const q = query.trim()
-    if (q.length === 0) { setHits(null); return }
-    let alive = true
-    const t = window.setTimeout(() => {
-      api.search(q).then(r => { if (alive) setHits(r) }, () => { if (alive) setHits([]) })
-    }, 220)
-    return () => { alive = false; window.clearTimeout(t) }
-  }, [query, lib])
-
-  const live = useMemo(() => (lib?.docs ?? []).filter(d => d.trashedAt === undefined).sort((a, b) => b.updatedAt - a.updatedAt), [lib])
-  const trash = useMemo(() => (lib?.docs ?? []).filter(d => d.trashedAt !== undefined).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)), [lib])
-  const folders = useMemo(() => [...(lib?.folders ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')), [lib])
-
-  const toggleFolder = (id: string): void => setOpenFolders(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
-
-  const newFolder = async (): Promise<void> => {
-    const name = await dialogs.prompt({ title: '新建文件夹', placeholder: '文件夹名称', ok: '创建' })
-    if (name === null || name.trim().length === 0) return
-    try {
-      const f = await api.createFolder(name.trim())
-      if (lib !== null) props.onChanged({ ...lib, folders: [...lib.folders, f] })
-      setOpenFolders(s => new Set(s).add(f.id))
-    } catch (error) { dialogs.toast('创建失败：' + errText(error)) }
-  }
-
-  const docMenu = (m: DocMeta, x: number, y: number): void => {
-    const items: MenuEntry[] = [
-      { label: '打开', onSelect: () => props.onOpen(m.id) },
-      { label: '重命名', onSelect: () => setRenaming(m.id) },
-      { label: m.favorite ? '取消收藏' : '收藏', onSelect: () => void props.onPatch(m.id, { favorite: !m.favorite }) },
-      { kind: 'sep' },
-      { kind: 'label', label: '移动到' },
-      { label: (m.folderId === null ? '✓ ' : '') + '未分类', disabled: m.folderId === null, onSelect: () => void props.onPatch(m.id, { folderId: null }) },
-      ...folders.map<MenuEntry>(f => ({ label: (m.folderId === f.id ? '✓ ' : '') + f.name, disabled: m.folderId === f.id, onSelect: () => void props.onPatch(m.id, { folderId: f.id }) })),
-      { kind: 'sep' },
-      { label: '删除', danger: true, onSelect: () => void props.onTrash(m.id) },
-    ]
-    props.onMenu({ x, y, items })
-  }
-
-  const folderMenu = (id: string, name: string, x: number, y: number): void => {
-    props.onMenu({ x, y, items: [
-      { label: '在此新建文档', onSelect: () => props.onCreate(id) },
-      { label: '重命名', onSelect: async () => {
-        const next = await dialogs.prompt({ title: '重命名文件夹', value: name, ok: '保存' })
-        if (next === null || next.trim().length === 0 || next.trim() === name) return
-        try { const f = await api.renameFolder(id, next.trim()); if (lib !== null) props.onChanged({ ...lib, folders: lib.folders.map(x2 => (x2.id === id ? f : x2)) }) } catch (error) { dialogs.toast('重命名失败：' + errText(error)) }
-      } },
-      { label: '删除文件夹', danger: true, onSelect: async () => {
-        const ok = await dialogs.confirm({ title: '删除文件夹「' + name + '」？', message: '文件夹里的文档不会被删除，会移到「未分类」。', ok: '删除', danger: true })
-        if (!ok) return
-        try { await api.deleteFolder(id); await props.onRefresh() } catch (error) { dialogs.toast('删除失败：' + errText(error)) }
-      } },
-    ] })
-  }
-
-  const docRow = (m: DocMeta, indent: boolean, keyPrefix: string): ReactNode => (
-    <div key={keyPrefix + m.id} className={'mm-row' + (indent ? ' mm-indent' : '') + (m.id === props.activeId ? ' mm-active' : '')} role="button" tabIndex={0}
-      aria-current={m.id === props.activeId ? 'page' : undefined}
-      onClick={() => { if (renaming !== m.id) props.onOpen(m.id) }}
-      onKeyDown={e => { if (e.key === 'Enter' && renaming !== m.id) props.onOpen(m.id); else if (e.key === 'F2') setRenaming(m.id) }}
-      onDoubleClick={() => setRenaming(m.id)}
-      onContextMenu={e => { e.preventDefault(); docMenu(m, e.clientX, e.clientY) }}>
-      {renaming === m.id ? (
-        <RenameInput value={m.title} onDone={title => { setRenaming(null); if (title !== null && title.trim().length > 0 && title.trim() !== m.title) void props.onPatch(m.id, { title: title.trim() }) }} />
-      ) : (
-        <>
-          <span className="mm-row-title" title={m.title}>{m.title}</span>
-          <span className="mm-row-time" title={new Date(m.updatedAt).toLocaleString()}>{relTime(m.updatedAt)}</span>
-        </>
-      )}
-    </div>
-  )
-
-  const favorites = live.filter(d => d.favorite)
-  const loose = live.filter(d => d.folderId === null)
-  return (
-    <aside className="mm-side" aria-label="文档">
-      <div className="mm-side-head">
-        <span className="mm-side-title">思维导图</span>
-        <button type="button" className="mm-icon-btn" title="新建文件夹" aria-label="新建文件夹" onClick={() => void newFolder()}><Icon name="folderPlus" /></button>
-        <button type="button" className="mm-icon-btn" title="新建文档" aria-label="新建文档" onClick={() => props.onCreate(null)}><Icon name="plus" /></button>
-      </div>
-      <label className="mm-search">
-        <Icon name="search" size={14} />
-        <input type="search" placeholder="搜索文档和内容" aria-label="搜索文档和内容" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setQuery('') }} />
-      </label>
-      <div className="mm-side-scroll">
-        {props.error !== null ? <div className="mm-empty">无法读取文档列表：{props.error} <button type="button" className="mm-btn" onClick={() => void props.onRefresh()}>重试</button></div> : null}
-        {hits !== null ? (
-          <div className="mm-section">
-            <div className="mm-section-head">搜索结果 · {hits.length}</div>
-            {hits.length === 0 ? <div className="mm-empty">没有匹配的内容</div> : hits.map((h, i) => (
-              <div key={i} className="mm-hit" role="button" tabIndex={0} onClick={() => props.onOpen(h.docId, h.nodeId)} onKeyDown={e => { if (e.key === 'Enter') props.onOpen(h.docId, h.nodeId) }}>
-                <div className="mm-hit-title">{h.title}</div>
-                {h.nodeId !== null ? <div className="mm-hit-snip">{renderInline(h.snippet)}</div> : null}
-              </div>
-            ))}
-          </div>
-        ) : lib === null && props.error === null ? <div className="mm-empty">加载中…</div> : (
-          <>
-            {favorites.length > 0 ? (
-              <div className="mm-section">
-                <div className="mm-section-head">收藏</div>
-                {favorites.map(m => docRow(m, false, 'fav-'))}
-              </div>
-            ) : null}
-            {folders.length > 0 ? (
-              <div className="mm-section">
-                <div className="mm-section-head">文件夹</div>
-                {folders.map(f => {
-                  const docs = live.filter(d => d.folderId === f.id)
-                  const open = openFolders.has(f.id)
-                  return (
-                    <div key={f.id}>
-                      <div className="mm-row" role="button" tabIndex={0} aria-expanded={open} onClick={() => toggleFolder(f.id)} onKeyDown={e => { if (e.key === 'Enter') toggleFolder(f.id) }}
-                        onContextMenu={e => { e.preventDefault(); folderMenu(f.id, f.name, e.clientX, e.clientY) }}>
-                        <span style={{ display: 'inline-flex', transform: open ? 'none' : 'rotate(-90deg)', color: 'var(--mm-sub)' }}><Icon name="chevron" size={12} /></span>
-                        <Icon name="folder" size={14} />
-                        <span className="mm-row-title">{f.name}</span>
-                        <span className="mm-row-time">{docs.length}</span>
-                      </div>
-                      {open ? (docs.length === 0 ? <div className="mm-empty mm-indent">空文件夹</div> : docs.map(m => docRow(m, true, 'f-'))) : null}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : null}
-            <div className="mm-section">
-              <div className="mm-section-head"><span className="mm-grow">{folders.length > 0 ? '未分类' : '文档'}</span><span>最近编辑</span></div>
-              {loose.length === 0 ? <div className="mm-empty">{live.length === 0 ? '点击右上角 + 新建文档' : '没有未分类的文档'}</div> : loose.map(m => docRow(m, false, 'd-'))}
-            </div>
-            {trash.length > 0 ? (
-              <div className="mm-section">
-                <div className="mm-row" role="button" tabIndex={0} aria-expanded={showTrash} onClick={() => setShowTrash(s => !s)} onKeyDown={e => { if (e.key === 'Enter') setShowTrash(s => !s) }}>
-                  <Icon name="trash" size={14} /><span className="mm-row-title" style={{ color: 'var(--mm-sub)' }}>回收站</span><span className="mm-row-time">{trash.length}</span>
-                </div>
-                {showTrash ? trash.map(m => (
-                  <div key={'t-' + m.id} className="mm-row mm-indent" onContextMenu={e => e.preventDefault()}>
-                    <span className="mm-row-title" style={{ color: 'var(--mm-sub)' }} title={m.title}>{m.title}</span>
-                    <button type="button" className="mm-btn" style={{ height: 22, padding: '0 6px', fontSize: 12 }} onClick={async () => {
-                      try { const meta = await api.restore(m.id); if (lib !== null) props.onChanged({ ...lib, docs: lib.docs.map(d => (d.id === m.id ? meta : d)) }) } catch (error) { dialogs.toast('恢复失败：' + errText(error)) }
-                    }}>恢复</button>
-                    <button type="button" className="mm-btn mm-danger" style={{ height: 22, padding: '0 6px', fontSize: 12 }} onClick={async () => {
-                      const ok = await dialogs.confirm({ title: '永久删除「' + m.title + '」？', message: '此操作无法撤销（每日备份中仍可能保留旧版本）。', ok: '永久删除', danger: true })
-                      if (!ok) return
-                      try { await api.purge(m.id); await props.onRefresh() } catch (error) { dialogs.toast('删除失败：' + errText(error)) }
-                    }}>删除</button>
-                  </div>
-                )) : null}
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
-      <div className="mm-side-head" style={{ borderTop: '1px solid var(--mm-border)', padding: '8px 12px' }}>
-        <button type="button" className="mm-btn" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={props.onImport}><Icon name="upload" size={14} />导入</button>
-        <button type="button" className="mm-btn" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={props.onBackups}><Icon name="backup" size={14} />备份</button>
-      </div>
-    </aside>
-  )
-}
-
-function RenameInput(props: { value: string; onDone(value: string | null): void }): ReactNode {
-  const [v, setV] = useState(props.value)
-  const done = useRef(false)
-  const finish = (value: string | null): void => { if (!done.current) { done.current = true; props.onDone(value) } }
-  return (
-    <input autoFocus value={v} aria-label="文档名称" onFocus={e => e.currentTarget.select()} onClick={e => e.stopPropagation()} onChange={e => setV(e.target.value)}
-      onBlur={() => finish(v)}
-      onKeyDown={e => {
-        e.stopPropagation()
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return
-        if (e.key === 'Enter') finish(v)
-        else if (e.key === 'Escape') finish(null)
-      }} />
-  )
-}
-
 function BackupPanel(props: { close(): void; onRestored(): Promise<void> }): ReactNode {
   const dialogs = useDialogs()
   const [list, setList] = useState<BackupInfo[] | null>(null)
@@ -580,8 +457,11 @@ function BackupPanel(props: { close(): void; onRestored(): Promise<void> }): Rea
   const fileRef = useRef<HTMLInputElement>(null)
   const load = useCallback(() => { api.backups().then(setList, error => dialogs.toast('读取备份失败：' + errText(error))) }, [dialogs])
   useEffect(load, [load])
+  const [quarantined, setQuarantined] = useState<QuarantinedFile[]>([])
+  useEffect(() => { api.quarantine().then(setQuarantined, () => setQuarantined([])) }, [])
   const restore = async (fn: () => Promise<{ docs: number; preRestore: string }>, what: string): Promise<void> => {
-    if (!window.confirm('用' + what + '覆盖当前所有文档？\n恢复前会自动备份当前数据，可以再恢复回来。')) return
+    const yes = await dialogs.confirm({ title: '恢复备份', message: '用' + what + '覆盖当前所有文档？\n恢复前会自动备份当前数据，可以再恢复回来。', ok: '恢复', danger: true })
+    if (!yes) return
     setBusy(true)
     try {
       const r = await fn()
@@ -593,7 +473,7 @@ function BackupPanel(props: { close(): void; onRestored(): Promise<void> }): Rea
   }
   return (
     <div>
-      <p style={{ margin: '0 0 10px', color: 'var(--mm-sub)' }}>每天首次保存时自动备份一次，保留最近 30 份。数据保存在本机 ~/.dsh/dsh-mindmap。</p>
+      <p style={{ margin: '0 0 10px', color: 'var(--mm-sub)' }}>每天首次保存前自动备份一次（保留 14 份）；另保留最近 10 份手动备份、5 份恢复前备份和 5 份永久删除前备份。数据保存在本机 ~/.dsh/dsh-mindmap。</p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <button type="button" className="mm-btn mm-primary" disabled={busy} onClick={async () => { setBusy(true); try { const b = await api.backupNow(); dialogs.toast('已备份：' + b.name); load() } catch (error) { dialogs.toast('备份失败：' + errText(error)) } finally { setBusy(false) } }}>立即备份</button>
         <button type="button" className="mm-btn" disabled={busy} onClick={() => fileRef.current?.click()}>从文件恢复…</button>
@@ -608,10 +488,51 @@ function BackupPanel(props: { close(): void; onRestored(): Promise<void> }): Rea
       </div>
       {list === null ? <div className="mm-empty">加载中…</div> : list.length === 0 ? <div className="mm-empty">还没有备份</div> : list.map(b => (
         <div key={b.name} className="mm-backup-row">
-          <span title={b.name}>{new Date(b.createdAt).toLocaleString()}<br /><small style={{ color: 'var(--mm-sub)' }}>{b.name} · {(b.size / 1024).toFixed(1)} KB</small></span>
+          <span title={b.name}>{new Date(b.createdAt).toLocaleString()}<br /><small style={{ color: 'var(--mm-sub)' }}>{BACKUP_KIND_LABEL[b.kind ?? 'manual']} · {(b.size / 1024).toFixed(1)} KB</small></span>
           <a className="mm-btn" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }} href={api.backupUrl(b.name)} download={b.name}>下载</a>
           <button type="button" className="mm-btn" disabled={busy} onClick={() => void restore(() => api.restoreBackup(b.name), '备份 ' + b.name)}>恢复</button>
         </div>
+      ))}
+      {quarantined.length > 0 ? (
+        <div style={{ marginTop: 14 }}>
+          <div className="mm-menu-label" style={{ padding: '4px 0' }}>已隔离的损坏文件（未删除，可手动检查）</div>
+          {quarantined.map(q => <div key={q.name} className="mm-backup-row"><span><code className="mm-code">{q.name}</code><br /><small style={{ color: 'var(--mm-sub)' }}>{new Date(q.createdAt).toLocaleString()} · {(q.size / 1024).toFixed(1)} KB</small></span></div>)}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const BACKUP_KIND_LABEL: Record<BackupKind, string> = { daily: '每日自动', manual: '手动', 'pre-restore': '恢复前', purge: '永久删除前' }
+
+
+function StatusBar(props: { doc: OutlineDoc; rootId: string }): ReactNode {
+  const c = useMemo(() => countTree(props.doc, props.rootId), [props.doc, props.rootId])
+  return (
+    <div className="mm-statusbar" aria-label="统计">
+      <span>{c.nodes} 个节点</span>
+      <span>{c.chars} 字</span>
+      {c.todo > 0 ? <span>待办 {c.done}/{c.todo}</span> : null}
+    </div>
+  )
+}
+
+const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
+  ['编辑', [['Enter', '新建同级节点（在光标处拆分）'], ['Tab / Shift+Tab', '缩进 / 取消缩进'], ['Shift+Enter', '添加或编辑备注'], ['Alt+Enter', '节点内换行'], ['Backspace（行首）', '与上一节点合并'], ['Delete（行尾）', '合并下一节点'], ['Ctrl+Shift+Backspace', '删除当前节点'], ['Ctrl+Enter', '标记完成'], ['Ctrl+B / Ctrl+I', '粗体 / 斜体'], ['Ctrl+E / Ctrl+Shift+S', '代码 / 删除线']]],
+  ['移动与折叠', [['↑ / ↓', '上 / 下一行'], ['Alt+↑ / Alt+↓', '上移 / 下移节点'], ['Ctrl+.', '折叠 / 展开'], ['Ctrl+↑ / Ctrl+↓', '折叠 / 展开'], ['Alt+→ / Alt+←', '聚焦节点 / 返回上一级']]],
+  ['选择', [['Esc', '退出编辑并选中节点'], ['Shift+↑ / Shift+↓', '扩展选择'], ['Ctrl+C / Ctrl+X / Ctrl+V', '复制 / 剪切 / 粘贴节点']]],
+  ['全局', [['Ctrl+Z / Ctrl+Shift+Z', '撤销 / 重做'], ['Ctrl+F', '查找和替换'], ['Alt+1…9', '打开第 n 篇收藏'], ['Ctrl+/ 或 ?', '显示快捷键']]],
+  ['导图', [['Tab / Enter', '添加子 / 同级节点'], ['F2 或 Space', '编辑节点'], ['方向键', '在节点间移动'], ['Delete', '删除节点'], ['拖动空白处 / 滚轮', '平移 / 缩放']]],
+]
+
+function ShortcutPanel(): ReactNode {
+  return (
+    <div className="mm-shortcuts">
+      {SHORTCUTS.map(([group, rows]) => (
+        <section key={group}>
+          <h4>{group}</h4>
+          <dl>{rows.map(([k, v]) => <div key={k}><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>)}</dl>
+        </section>
       ))}
     </div>
   )

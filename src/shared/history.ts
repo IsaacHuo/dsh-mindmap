@@ -17,8 +17,11 @@ export interface HistoryEntry<T> {
   selection: Selection | null
 }
 
-/** Typing merge window. */
+/** Typing merge window (gap between keystrokes). */
 export const MERGE_MS = 1000
+
+/** A merged typing run never spans longer than this. */
+export const MAX_RUN_MS = 3000
 
 /** Bounded undo/redo stacks. */
 export class History<T> {
@@ -26,6 +29,7 @@ export class History<T> {
   private future: Array<HistoryEntry<T>> = []
   private lastKey: string | null = null
   private lastAt = 0
+  private runStart = 0
   private readonly limit: number
   constructor(limit = 200) {
     this.limit = limit
@@ -34,10 +38,11 @@ export class History<T> {
   /** Record `before` (the state prior to an edit). Returns false when merged into the previous step. */
   record(before: T, selection: Selection | null, key: string | null = null, now = Date.now()): boolean {
     this.future = []
-    const merge = key !== null && key === this.lastKey && now - this.lastAt < MERGE_MS
+    const merge = key !== null && key === this.lastKey && now - this.lastAt < MERGE_MS && now - this.runStart < MAX_RUN_MS
     this.lastKey = key
     this.lastAt = now
     if (merge) return false
+    this.runStart = now
     this.past.push({ state: before, selection })
     if (this.past.length > this.limit) this.past.shift()
     return true

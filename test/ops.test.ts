@@ -65,11 +65,17 @@ test('backspaceAtStart: delete empty leaf, keep empty parent, merge into leaf si
   assert.equal(up.focusId, idOf(doc, 'a2'))
   assert.equal(up.caret, 2)
   assert.equal(validateDoc(up.doc), null)
-  // ...but a node with children never merges upwards across levels.
+  // A node with children merges into the leaf above and hands its children over.
   const withKid = ops.insertChild(doc, idOf(doc, 'b'), 0, 'b1').doc
-  assert.equal(ops.backspaceAtStart(withKid, idOf(doc, 'b'), idOf(doc, 'a2')), null, 'prev sibling expanded, node has children')
-  // First child never merges into its parent.
-  assert.equal(ops.backspaceAtStart(doc, idOf(doc, 'a1'), idOf(doc, 'a')), null, 'first child stays')
+  const kid = ops.backspaceAtStart(withKid, idOf(doc, 'b'), idOf(doc, 'a2'))!
+  assert.deepEqual(texts(kid.doc), [['a', ['a1', ['a2b', ['b1']]]]])
+  assert.equal(validateDoc(kid.doc), null)
+  // First child merges into its parent line; its children take its place.
+  const first = ops.backspaceAtStart(doc, idOf(doc, 'a1'), idOf(doc, 'a'))!
+  assert.deepEqual(texts(first.doc), [['aa1', ['a2']], 'b'])
+  assert.equal(first.focusId, idOf(doc, 'a'))
+  assert.equal(first.caret, 1)
+  assert.equal(validateDoc(first.doc), null)
   doc = ops.setText(doc, idOf(doc, 'a'), '')
   const ea = Object.values(doc.nodes).find(n => n.text === '' && n.children.length === 2)!.id
   assert.equal(ops.backspaceAtStart(doc, ea, undefined), null, 'empty node with children is kept')

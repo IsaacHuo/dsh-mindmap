@@ -10,11 +10,11 @@ Outline notes with a live mind-map view for the [DeepSeek Harness](https://githu
 
 ## Features
 
-- **Outline** — unlimited levels; Enter splits/creates a sibling, Shift+Enter inserts a line break, Tab / Shift+Tab indent / outdent, Backspace deletes an empty node or merges with the previous one, Delete merges the next one, ↑/↓ move across nodes, Alt+↑/↓ move a node, Ctrl+. collapse, Ctrl+Enter toggle done, Alt+→ focus a subtree (breadcrumb to go back), Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo/redo. Drag the bullet to reorder or change level. Multi-line paste becomes a tree. Inline Markdown (bold, italic, strikethrough, code, links, #tags) and checkboxes. IME composition is never intercepted.
-- **Mind map** — horizontal tree with connectors, collapse/expand, Ctrl+wheel zoom (20%–300%), drag to pan, center / fit / 100%, double-click or F2 to edit, Tab adds a child, Enter adds a sibling.
-- **Documents** — create, rename, trash and restore, folders, favorites, last-edited time, search across titles and node text.
+- **Outline** — unlimited levels; Enter splits/creates a sibling, Alt+Enter inserts a line break, Shift+Enter adds a note, Tab / Shift+Tab indent / outdent, Backspace deletes an empty node or merges with the previous one, Delete merges the next one, ↑/↓ move across nodes, Alt+↑/↓ move a node, Ctrl+. collapse, Ctrl+Enter toggle done, Alt+→ focus a subtree (breadcrumb to go back), Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo/redo. Drag the bullet to reorder or change level. Multi-line paste becomes a tree. Inline Markdown (bold, italic, strikethrough, code, links, #tags) and checkboxes. Find and replace (Ctrl+F), #tag filter, Esc selects rows for batch indent / move / delete / copy. Press Ctrl+/ for all shortcuts. IME composition is never intercepted.
+- **Mind map** — two-sided or right-only tree with coloured branches, collapse/expand, Ctrl+wheel zoom (20%–300%), drag to pan, center / fit / 100%, double-click or F2 to edit, Tab adds a child, Enter adds a sibling, arrows move between nodes, drag a node to reparent it.
+- **Documents** — create, rename, trash and restore, nested folders with drag and drop, favorites (Alt+1…9), sorting, last-edited time, search across titles, node text and notes; trash is emptied automatically after 30 days.
 - **Import / export** — import Markdown and OPML; export Markdown, OPML, PNG and SVG (whole document or the focused subtree).
-- **Storage** — autosave 800 ms after typing stops and immediately on document switch / page hide; atomic writes; revision-based conflict detection; daily automatic backups (last 30 kept), manual backup, download and restore.
+- **Storage** — autosave 800 ms after typing stops and immediately on document switch / page hide; atomic writes; revision-based conflict detection; daily automatic backups (14 kept), manual backup, download and atomic restore; edits in another tab are picked up automatically.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 From GitHub (pin a tag; `lib/` is committed, so no build step runs on install):
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.1.0
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0
 ```
 
 Restart DSH. A **思维导图** entry appears in the sidebar.
@@ -60,7 +60,7 @@ Uninstalling keeps your documents. Delete the data directory below by hand if yo
 
 - Data directory: `~/.dsh/dsh-mindmap/` (or `$DSH_HOME/dsh-mindmap`; override with `DSH_MINDMAP_DIR`). It holds `library.json`, `docs/<id>.json` and `backups/`.
 - Documents are plain, unencrypted JSON. Anyone with access to your user account can read them; don't store secrets.
-- The plugin only registers HTTP routes under `/dsh-mindmap/api` on the DSH web server and inherits its access control. Write requests must be `application/json` (blocks simple cross-site form posts); bodies are capped at 8 MB; document ids are validated before touching the file system.
+- The plugin only registers HTTP routes under `/dsh-mindmap/api` on the DSH web server and inherits its access control. Write requests must be `application/json` (blocks simple cross-site form posts); requests must come from a loopback host with a same-origin `Origin`; bodies are capped per route (save 32 MB, restore 64 MB, others 1 MB); document ids are validated before touching the file system.
 - No network requests, telemetry, agent tools or model calls. Links in notes open only for `http(s)` URLs, and notes are never rendered as HTML.
 
 ## Development

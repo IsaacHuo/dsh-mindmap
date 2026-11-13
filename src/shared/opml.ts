@@ -1,5 +1,5 @@
 /**
- * OPML 2.0 import/export (text attribute; _checked for checklist state). The
+ * OPML 2.0 import/export (text attribute; _note for notes, _checked for checklist state). The
  * parser is a small tokenizer so it runs identically in the host, the browser
  * and tests.
  * @module dsh-mindmap/shared/opml
@@ -30,7 +30,8 @@ export function toOpml(doc: OutlineDoc, rootId: string = doc.rootId, title: stri
       const n = doc.nodes[id]
       if (n === undefined) continue
       const pad = '  '.repeat(depth + 2)
-      const attrs = `text="${esc(n.text)}"${typeof n.checked === 'boolean' ? ` _checked="${n.checked}"` : ''}`
+      const note = typeof n.note === 'string' && n.note.length > 0 ? ` _note="${esc(n.note)}"` : ''
+      const attrs = `text="${esc(n.text)}"${note}${typeof n.checked === 'boolean' ? ` _checked="${n.checked}"` : ''}`
       if (n.children.length === 0) out.push(`${pad}<outline ${attrs}/>`)
       else {
         out.push(`${pad}<outline ${attrs}>`)
@@ -52,7 +53,8 @@ export function parseOpml(xml: string): { title?: string; items: TreeItem[] } {
   const body = bodyAt >= 0 ? xml.slice(bodyAt) : xml
   const root: TreeItem[] = []
   const stack: TreeItem[] = []
-  const tokens = /<outline\b([^>]*?)(\/?)>|<\/outline\s*>/gi
+  // Quote-aware: '>' inside an attribute value does not end the tag.
+  const tokens = /<outline\b((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>|<\/outline\s*>/gi
   let m: RegExpExecArray | null
   while ((m = tokens.exec(body)) !== null) {
     if (m[0].startsWith('</')) { stack.pop(); continue }
@@ -64,6 +66,8 @@ export function parseOpml(xml: string): { title?: string; items: TreeItem[] } {
     const flag = attrs._checked ?? attrs._complete
     if (flag === 'true') item.checked = true
     else if (attrs._checked === 'false') item.checked = false
+    const note = (attrs._note ?? '').replace(/\r/g, '')
+    if (note.trim().length > 0) item.note = note
     ;(stack.length > 0 ? stack[stack.length - 1]!.children : root).push(item)
     if (m[2] !== '/') stack.push(item)
   }

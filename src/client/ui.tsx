@@ -56,6 +56,12 @@ export function PopupMenu(props: { x: number; y: number; items: MenuEntry[]; onC
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x: props.x, y: props.y })
   const onClose = props.onClose
+  // Give focus back to whatever had it when the menu opened (row, textarea, button).
+  const opener = useRef<Element | null>(typeof document === 'undefined' ? null : document.activeElement)
+  useEffect(() => () => {
+    const el = opener.current as HTMLElement | null
+    if (el !== null && typeof el.focus === 'function' && document.contains(el) && (document.activeElement === null || document.activeElement === document.body || ref.current?.contains(document.activeElement) === true)) el.focus({ preventScroll: true })
+  }, [])
   useLayoutEffect(() => {
     const el = ref.current
     if (el === null) return
@@ -67,6 +73,7 @@ export function PopupMenu(props: { x: number; y: number; items: MenuEntry[]; onC
     const down = (e: MouseEvent): void => { if (ref.current !== null && !ref.current.contains(e.target as Node)) onClose() }
     const key = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return }
+      if (e.key === 'Tab') { e.preventDefault(); onClose(); return }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         const list = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
@@ -104,10 +111,14 @@ export function PopupMenu(props: { x: number; y: number; items: MenuEntry[]; onC
 
 interface DialogApi {
   confirm(opts: { title: string; message?: string; ok?: string; danger?: boolean }): Promise<boolean>
-  prompt(opts: { title: string; value?: string; placeholder?: string; ok?: string }): Promise<string | null>
+  prompt(opts: { title: string; value?: string; placeholder?: string; ok?: string; multiline?: boolean; message?: string }): Promise<string | null>
   show(opts: { title: string; body: (close: () => void) => ReactNode }): void
-  toast(message: string): void
+  /** Short notice; with an action (e.g. 撤销) it stays longer and shows a button. */
+  toast(message: string, action?: ToastAction): void
 }
+
+/** Button shown inside a toast. */
+export interface ToastAction { label: string; onClick: () => void }
 
 const DialogContext = createContext<DialogApi | null>(null)
 
@@ -120,22 +131,22 @@ export function useDialogs(): DialogApi {
 
 type Pending =
   | { kind: 'confirm'; title: string; message?: string; ok: string; danger: boolean; resolve: (v: boolean) => void }
-  | { kind: 'prompt'; title: string; value: string; placeholder: string; ok: string; resolve: (v: string | null) => void }
+  | { kind: 'prompt'; title: string; value: string; placeholder: string; ok: string; multiline: boolean; message?: string; resolve: (v: string | null) => void }
   | { kind: 'custom'; title: string; body: (close: () => void) => ReactNode }
 
 /** Provides dialogs to its subtree and renders them. */
 export function DialogHost(props: { children: ReactNode }): ReactNode {
   const [pending, setPending] = useState<Pending | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; action?: ToastAction } | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
   const api = useMemo<DialogApi>(() => ({
     confirm: o => new Promise<boolean>(resolve => setPending({ kind: 'confirm', title: o.title, message: o.message, ok: o.ok ?? '确定', danger: o.danger === true, resolve })),
-    prompt: o => new Promise<string | null>(resolve => setPending({ kind: 'prompt', title: o.title, value: o.value ?? '', placeholder: o.placeholder ?? '', ok: o.ok ?? '确定', resolve })),
+    prompt: o => new Promise<string | null>(resolve => setPending({ kind: 'prompt', title: o.title, value: o.value ?? '', placeholder: o.placeholder ?? '', ok: o.ok ?? '确定', multiline: o.multiline === true, message: o.message, resolve })),
     show: o => setPending({ kind: 'custom', title: o.title, body: o.body }),
-    toast: message => {
-      setToast(message)
+    toast: (message, action) => {
+      setToast(action === undefined ? { message } : { message, action })
       window.clearTimeout(toastTimer.current)
-      toastTimer.current = window.setTimeout(() => setToast(null), 2600)
+      toastTimer.current = window.setTimeout(() => setToast(null), action === undefined ? 2600 : 6000)
     },
   }), [])
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
@@ -144,7 +155,12 @@ export function DialogHost(props: { children: ReactNode }): ReactNode {
     <DialogContext.Provider value={api}>
       {props.children}
       {pending !== null ? <Dialog pending={pending} onDone={done} /> : null}
-      {toast !== null ? <div className="mm-toast" role="status">{toast}</div> : null}
+      {toast !== null ? (
+        <div className="mm-toast" role="status">
+          <span>{toast.message}</span>
+          {toast.action !== undefined ? <button type="button" className="mm-toast-btn" onClick={() => { const a = toast.action; setToast(null); window.clearTimeout(toastTimer.current); a?.onClick() }}>{toast.action.label}</button> : null}
+        </div>
+      ) : null}
     </DialogContext.Provider>
   )
 }
@@ -152,7 +168,7 @@ export function DialogHost(props: { children: ReactNode }): ReactNode {
 function Dialog(props: { pending: Pending; onDone: () => void }): ReactNode {
   const p = props.pending
   const [value, setValue] = useState(p.kind === 'prompt' ? p.value : '')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
   const okRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -168,8 +184,22 @@ function Dialog(props: { pending: Pending; onDone: () => void }): ReactNode {
     else if (p.kind === 'prompt') p.resolve(ok ? value : null)
   }
   const onKey = (e: ReactKeyboardEvent): void => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false) }
-    else if (e.key === 'Enter' && p.kind !== 'custom' && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); finish(true) }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return }
+    if (e.key === 'Tab') {
+      // Focus trap: keep Tab inside the dialog.
+      const list = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select,a[href],[tabindex="0"]') ?? [])
+      if (list.length === 0) { e.preventDefault(); return }
+      const at = list.indexOf(document.activeElement as HTMLElement)
+      const next = e.shiftKey ? (at <= 0 ? list.length - 1 : at - 1) : (at === -1 || at === list.length - 1 ? 0 : at + 1)
+      e.preventDefault()
+      list[next]!.focus()
+      return
+    }
+    const multiline = p.kind === 'prompt' && p.multiline
+    if (e.key === 'Enter' && p.kind !== 'custom' && !e.nativeEvent.isComposing && e.keyCode !== 229 && (!multiline || e.ctrlKey || e.metaKey)) {
+      if ((e.target as HTMLElement).tagName === 'BUTTON' && !(e.ctrlKey || e.metaKey)) return
+      e.preventDefault(); finish(true)
+    }
   }
   return (
     <div className="mm-modal-mask" onMouseDown={e => { if (e.target === e.currentTarget) finish(false) }} onKeyDown={onKey}>
@@ -177,7 +207,9 @@ function Dialog(props: { pending: Pending; onDone: () => void }): ReactNode {
         <h3>{p.title}</h3>
         <div className="mm-modal-body">
           {p.kind === 'confirm' && p.message !== undefined ? <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{p.message}</p> : null}
-          {p.kind === 'prompt' ? <input ref={inputRef} type="text" aria-label={p.title} value={value} placeholder={p.placeholder} onChange={e => setValue(e.target.value)} /> : null}
+          {p.kind === 'prompt' && p.message !== undefined ? <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap', color: 'var(--mm-sub)' }}>{p.message}</p> : null}
+          {p.kind === 'prompt' && p.multiline ? <textarea ref={inputRef} className="mm-modal-area" aria-label={p.title} value={value} placeholder={p.placeholder} rows={10} onChange={e => setValue(e.target.value)} /> : null}
+          {p.kind === 'prompt' && !p.multiline ? <input ref={inputRef} type="text" aria-label={p.title} value={value} placeholder={p.placeholder} onChange={e => setValue(e.target.value)} /> : null}
           {p.kind === 'custom' ? p.body(props.onDone) : null}
         </div>
         {p.kind !== 'custom' ? (
