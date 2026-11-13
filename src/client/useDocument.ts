@@ -6,7 +6,7 @@
  * dirty and are sent afterwards; a 409 keeps the local copy and asks the user
  * which version wins; network errors retry with backoff; pagehide /
  * visibilitychange flush immediately (keepalive when small enough).
- * @module dsh-mindplan/client/useDocument
+ * @module dsh-mindmap/client/useDocument
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OutlineDoc } from '../shared/model.ts'
@@ -104,7 +104,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
           setStatus('dirty')
         }
       } catch (error) {
-        if (baseRev.current !== box) { console.warn('[dsh-mindplan] save of a closed document failed:', error); return }
+        if (baseRev.current !== box) { console.warn('[dsh-mindmap] save of a closed document failed:', error); return }
         if (error instanceof ApiError && error.code === 'conflict' && error.current !== undefined) {
           blocked.current = true
           setConflict(error.current)
@@ -176,7 +176,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
             box.rev = saved.revision
             onSavedRef.current(saved)
           } catch (error) {
-            console.warn('[dsh-mindplan] flush on close failed:', error)
+            console.warn('[dsh-mindmap] flush on close failed:', error)
           }
         })()
       }

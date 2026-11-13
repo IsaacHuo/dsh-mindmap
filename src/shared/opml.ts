@@ -2,7 +2,7 @@
  * OPML 2.0 import/export (text attribute; _checked for checklist state). The
  * parser is a small tokenizer so it runs identically in the host, the browser
  * and tests.
- * @module dsh-mindplan/shared/opml
+ * @module dsh-mindmap/shared/opml
  */
 import type { OutlineDoc, TreeItem } from './model.ts'
 

@@ -1,4 +1,4 @@
-# dsh-mindplan（思维导图）
+# dsh-mindmap（思维导图）
 
 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）Web 界面插件：大纲笔记 + 思维导图，两种视图编辑同一份文档。数据全部保存在本机：无账号、无云端、无 AI、无运行时依赖。
 
@@ -25,16 +25,16 @@
 
 把 `desktop` 换成你的 profile 名。`dsh plugin --profile <名称> ...` 会把参数转给该 profile 内的 pnpm。
 
-从 npm 安装：
+从 npm 安装（npm 包名为 `@huoweifang/dsh-mindmap`，插件本身名为 `dsh-mindmap`）：
 
 ```sh
-dsh plugin --profile desktop add dsh-mindplan
+dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 ```
 
 从 GitHub 安装（固定到 tag；仓库提交了 `lib/`，安装时不需要构建）：
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindplan#v0.1.0
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.1.0
 ```
 
 重启 DSH，侧边栏出现「思维导图」。
@@ -42,8 +42,8 @@ dsh plugin --profile desktop add github:IsaacHuo/dsh-mindplan#v0.1.0
 ### 更新
 
 ```sh
-dsh plugin --profile desktop add dsh-mindplan@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindplan#v0.2.0   # GitHub
+dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0   # GitHub
 ```
 
 npm 安装的版本也可以在 DSH 插件管理里更新。更新后重启 DSH。
@@ -51,16 +51,16 @@ npm 安装的版本也可以在 DSH 插件管理里更新。更新后重启 DSH�
 ### 卸载
 
 ```sh
-dsh plugin --profile desktop remove dsh-mindplan
+dsh plugin --profile desktop remove @huoweifang/dsh-mindmap
 ```
 
 卸载不会删除文档；如需彻底清除，手动删除下面的数据目录。
 
 ## 数据与安全
 
-- 数据目录：`~/.dsh/dsh-mindplan/`（或 `$DSH_HOME/dsh-mindplan`，可用 `DSH_MINDPLAN_DIR` 覆盖），包含 `library.json`、`docs/<id>.json`、`backups/`。预发布版本留下的 `dsh-mindmap` 目录会原地继续使用。
+- 数据目录：`~/.dsh/dsh-mindmap/`（或 `$DSH_HOME/dsh-mindmap`，可用 `DSH_MINDMAP_DIR` 覆盖），包含 `library.json`、`docs/<id>.json`、`backups/`。
 - 文档是未加密的 JSON 文件，能访问你系统账号的人都能读到，请勿存放机密。
-- 插件只在 DSH Web 服务上注册 `/dsh-mindplan/api` 路由，沿用 DSH 自身的访问控制；写请求必须是 `application/json`（挡住简单的跨站表单提交），请求体上限 8 MB，文档 id 在访问文件系统前校验。
+- 插件只在 DSH Web 服务上注册 `/dsh-mindmap/api` 路由，沿用 DSH 自身的访问控制；写请求必须是 `application/json`（挡住简单的跨站表单提交），请求体上限 8 MB，文档 id 在访问文件系统前校验。
 - 不发起网络请求、无遥测、不注册 Agent 工具、不调用模型。笔记中的链接只允许 `http(s)`，笔记内容从不作为 HTML 渲染。
 
 ## 开发

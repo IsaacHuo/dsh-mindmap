@@ -1,7 +1,7 @@
 /**
  * Small UI primitives: icons, popup menu, modal dialogs (confirm / prompt) and
  * a toast. All plain React, no third-party components.
- * @module dsh-mindplan/client/ui
+ * @module dsh-mindmap/client/ui
  */
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 

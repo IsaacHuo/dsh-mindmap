@@ -1,4 +1,4 @@
-# dsh-mindplan
+# dsh-mindmap
 
 Outline notes with a live mind-map view for the [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) web GUI. Both views edit the same document. Everything is stored locally: no account, no cloud, no AI, no runtime dependencies.
 
@@ -25,16 +25,16 @@ Outline notes with a live mind-map view for the [DeepSeek Harness](https://githu
 
 Replace `desktop` with your profile name. `dsh plugin --profile <name> ...` forwards the arguments to pnpm inside that profile.
 
-From npm:
+From npm (published as the scoped package `@huoweifang/dsh-mindmap`; the plugin itself is named `dsh-mindmap`):
 
 ```sh
-dsh plugin --profile desktop add dsh-mindplan
+dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 ```
 
 From GitHub (pin a tag; `lib/` is committed, so no build step runs on install):
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindplan#v0.1.0
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.1.0
 ```
 
 Restart DSH. A **思维导图** entry appears in the sidebar.
@@ -42,8 +42,8 @@ Restart DSH. A **思维导图** entry appears in the sidebar.
 ### Update
 
 ```sh
-dsh plugin --profile desktop add dsh-mindplan@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindplan#v0.2.0   # GitHub
+dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0   # GitHub
 ```
 
 npm installs can also be updated from the DSH plugin manager. Restart DSH afterwards.
@@ -51,16 +51,16 @@ npm installs can also be updated from the DSH plugin manager. Restart DSH afterw
 ### Uninstall
 
 ```sh
-dsh plugin --profile desktop remove dsh-mindplan
+dsh plugin --profile desktop remove @huoweifang/dsh-mindmap
 ```
 
 Uninstalling keeps your documents. Delete the data directory below by hand if you want them gone.
 
 ## Data and security
 
-- Data directory: `~/.dsh/dsh-mindplan/` (or `$DSH_HOME/dsh-mindplan`; override with `DSH_MINDPLAN_DIR`). It holds `library.json`, `docs/<id>.json` and `backups/`. A directory left by pre-release builds (`dsh-mindmap`) is reused in place.
+- Data directory: `~/.dsh/dsh-mindmap/` (or `$DSH_HOME/dsh-mindmap`; override with `DSH_MINDMAP_DIR`). It holds `library.json`, `docs/<id>.json` and `backups/`.
 - Documents are plain, unencrypted JSON. Anyone with access to your user account can read them; don't store secrets.
-- The plugin only registers HTTP routes under `/dsh-mindplan/api` on the DSH web server and inherits its access control. Write requests must be `application/json` (blocks simple cross-site form posts); bodies are capped at 8 MB; document ids are validated before touching the file system.
+- The plugin only registers HTTP routes under `/dsh-mindmap/api` on the DSH web server and inherits its access control. Write requests must be `application/json` (blocks simple cross-site form posts); bodies are capped at 8 MB; document ids are validated before touching the file system.
 - No network requests, telemetry, agent tools or model calls. Links in notes open only for `http(s)` URLs, and notes are never rendered as HTML.
 
 ## Development

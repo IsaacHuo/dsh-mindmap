@@ -3,7 +3,7 @@
  * these, so the outline and the mind map can never disagree. Every op
  * returns a new document (structural sharing) — or the same object when the
  * edit is a no-op, which lets callers skip history/save for no-ops.
- * @module dsh-mindplan/shared/ops
+ * @module dsh-mindmap/shared/ops
  */
 import { isInSubtree, newId, parentMap, type OutlineDoc, type OutlineNode, type TreeItem } from './model.ts'
 

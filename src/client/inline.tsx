@@ -2,7 +2,7 @@
  * Minimal inline Markdown for display: **bold**, *italic*, ~~strike~~,
  * inline code, [text](http…) and bare http(s) links, #tags. Produces React nodes,
  * never HTML strings; only http(s) URLs become links.
- * @module dsh-mindplan/client/inline
+ * @module dsh-mindmap/client/inline
  */
 import type { ReactNode } from 'react'
 

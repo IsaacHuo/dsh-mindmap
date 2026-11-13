@@ -1,5 +1,5 @@
 {
-  "name": "dsh-mindplan",
+  "name": "@huoweifang/dsh-mindmap",
   "version": "0.1.0",
   "description": "Outline notes with a live mind-map view for the DeepSeek Harness (DSH) web GUI. Local JSON storage, autosave, backups, Markdown/OPML import and export. No AI, no cloud, no runtime dependencies.",
   "type": "module",
@@ -34,13 +34,13 @@
   ],
   "license": "MIT",
   "author": "Weifang Huo <2210286979@qq.com>",
-  "homepage": "https://github.com/IsaacHuo/dsh-mindplan#readme",
+  "homepage": "https://github.com/IsaacHuo/dsh-mindmap#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/IsaacHuo/dsh-mindplan.git"
+    "url": "git+https://github.com/IsaacHuo/dsh-mindmap.git"
   },
   "bugs": {
-    "url": "https://github.com/IsaacHuo/dsh-mindplan/issues"
+    "url": "https://github.com/IsaacHuo/dsh-mindmap/issues"
   },
   "engines": {
     "node": ">=22",

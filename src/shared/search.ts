@@ -1,6 +1,6 @@
 /**
  * Case-insensitive search over document titles and node text.
- * @module dsh-mindplan/shared/search
+ * @module dsh-mindmap/shared/search
  */
 import type { OutlineDoc } from './model.ts'
 

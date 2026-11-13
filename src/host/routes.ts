@@ -1,10 +1,10 @@
 /**
- * /dsh-mindplan/api routes on the shared DSH webserver. JSON envelope
+ * /dsh-mindmap/api routes on the shared DSH webserver. JSON envelope
  * { ok, value | error }. Only GET and POST are used; every POST must carry a
  * JSON content type (a cross-origin page cannot send that without a CORS
  * preflight, which this server never grants), and every path parameter is
  * matched against a strict id / file-name pattern.
- * @module dsh-mindplan/host/routes
+ * @module dsh-mindmap/host/routes
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ROUTE_PREFIX, type ApiErrorCode } from '../shared/api.ts'
@@ -133,7 +133,7 @@ export function createHandler(storage: MindmapStorage): (req: IncomingMessage, r
         fail(res, error.code, error.message, error.current !== undefined ? { current: error.current } : {})
         return
       }
-      console.error('[dsh-mindplan] route failed:', error)
+      console.error('[dsh-mindmap] route failed:', error)
       fail(res, 'internal', error instanceof Error ? error.message : String(error))
     }
   }

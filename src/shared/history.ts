@@ -2,7 +2,7 @@
  * Snapshot undo/redo. States are immutable documents, so a snapshot is just a
  * reference. Consecutive edits that share a merge key (typing in one node)
  * within MERGE_MS collapse into a single undo step.
- * @module dsh-mindplan/shared/history
+ * @module dsh-mindmap/shared/history
  */
 
 /** Caret position to restore with a snapshot. */

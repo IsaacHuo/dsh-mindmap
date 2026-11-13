@@ -4,7 +4,7 @@
  * the background or wheel), fit / centre / 100 %. Nodes are edited in place
  * (double-click, F2 or typing) and every edit goes through the same ops and
  * history as the outline.
- * @module dsh-mindplan/client/MindMap
+ * @module dsh-mindmap/client/MindMap
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { OutlineDoc } from '../shared/model.ts'

@@ -24,7 +24,7 @@ async function step(name, fn) {
 
 function startHarness() {
   return new Promise((res, rej) => {
-    const p = spawn(process.execPath, [join(root, 'scripts/harness.mjs'), '0'], { env: { ...process.env, DSH_MINDPLAN_DIR: dataDir }, stdio: ['ignore', 'pipe', 'inherit'] })
+    const p = spawn(process.execPath, [join(root, 'scripts/harness.mjs'), '0'], { env: { ...process.env, DSH_MINDMAP_DIR: dataDir }, stdio: ['ignore', 'pipe', 'inherit'] })
     p.stdout.on('data', d => { const m = String(d).match(/harness (http:\/\/\S+)/); if (m) res({ proc: p, url: m[1] }) })
     p.on('exit', c => rej(new Error('harness exited ' + c)))
   })
@@ -42,7 +42,7 @@ page.on('console', m => { if (m.type() === 'error' && !/404/.test(m.text())) err
 const cdp = await page.createCDPSession()
 await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir })
 
-const api = (path) => page.evaluate(async p => (await (await fetch('/dsh-mindplan/api' + p)).json()).value, path)
+const api = (path) => page.evaluate(async p => (await (await fetch('/dsh-mindmap/api' + p)).json()).value, path)
 async function clickText(sel, text) {
   const ok = await page.evaluate((s, t) => { const el = [...document.querySelectorAll(s)].find(e => e.textContent.trim() === t); if (!el) return false; el.click(); return true }, sel, text)
   assert.ok(ok, 'no ' + sel + ' with text ' + text)
@@ -66,7 +66,7 @@ try {
   await page.goto(harness.url, { waitUntil: 'networkidle0' })
   await step('page registers main slot and sidebar entry 思维导图', async () => {
     const h = await page.evaluate(() => window.__harness)
-    assert.deepEqual(h, { main: ['dsh-mindplan'], side: ['思维导图'] })
+    assert.deepEqual(h, { main: ['dsh-mindmap'], side: ['思维导图'] })
   })
 
   await step('create doc 2027 个人规划 and build levels with Enter/Tab/Shift+Tab', async () => {

@@ -1,6 +1,6 @@
 /**
- * Browser-side client for /dsh-mindplan/api (same origin as the DSH GUI).
- * @module dsh-mindplan/client/api
+ * Browser-side client for /dsh-mindmap/api (same origin as the DSH GUI).
+ * @module dsh-mindmap/client/api
  */
 import { ROUTE_PREFIX, type ApiErrorCode, type ApiResult, type BackupInfo, type CreateDocBody, type PatchMetaBody } from '../shared/api.ts'
 import type { DocMeta, Folder, Library, OutlineDoc } from '../shared/model.ts'

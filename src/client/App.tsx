@@ -1,7 +1,7 @@
 /**
  * 思维导图 page: document navigator on the left, editor (大纲 / 导图) on the
  * right. One document model drives both views.
- * @module dsh-mindplan/client/App
+ * @module dsh-mindmap/client/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ancestors, isInSubtree, type DocMeta, type Library, type OutlineDoc } from '../shared/model.ts'
@@ -19,15 +19,12 @@ import { canvasMeasure, layoutMap, mapToSvg, svgToPng, themeColors } from './map
 import { DialogHost, download, fileName, Icon, PopupMenu, relTime, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
 
 type ViewMode = 'outline' | 'map'
-const LS_LAST = 'dsh-mindplan:last-doc'
-const LS_VIEW = 'dsh-mindplan:view'
-const LS_FOLDERS = 'dsh-mindplan:open-folders'
+const LS_LAST = 'dsh-mindmap:last-doc'
+const LS_VIEW = 'dsh-mindmap:view'
+const LS_FOLDERS = 'dsh-mindmap:open-folders'
 
 function lsGet(key: string): string | null {
-  try {
-    // Fall back to the pre-release dsh-mindmap:* keys so the last-open doc survives the rename.
-    return window.localStorage.getItem(key) ?? window.localStorage.getItem(key.replace(/^dsh-mindplan:/, 'dsh-mindmap:'))
-  } catch { return null }
+  try { return window.localStorage.getItem(key) } catch { return null }
 }
 function lsSet(key: string, value: string | null): void {
   try { if (value === null) window.localStorage.removeItem(key); else window.localStorage.setItem(key, value) } catch { /* storage disabled */ }
@@ -596,7 +593,7 @@ function BackupPanel(props: { close(): void; onRestored(): Promise<void> }): Rea
   }
   return (
     <div>
-      <p style={{ margin: '0 0 10px', color: 'var(--mm-sub)' }}>每天首次保存时自动备份一次，保留最近 30 份。数据保存在本机 ~/.dsh/dsh-mindplan。</p>
+      <p style={{ margin: '0 0 10px', color: 'var(--mm-sub)' }}>每天首次保存时自动备份一次，保留最近 30 份。数据保存在本机 ~/.dsh/dsh-mindmap。</p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <button type="button" className="mm-btn mm-primary" disabled={busy} onClick={async () => { setBusy(true); try { const b = await api.backupNow(); dialogs.toast('已备份：' + b.name); load() } catch (error) { dialogs.toast('备份失败：' + errText(error)) } finally { setBusy(false) } }}>立即备份</button>
         <button type="button" className="mm-btn" disabled={busy} onClick={() => fileRef.current?.click()}>从文件恢复…</button>

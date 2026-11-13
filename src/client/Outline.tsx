@@ -7,7 +7,7 @@
  * IME: key handling returns early while composing (isComposing / keyCode 229)
  * so Enter / Backspace / arrows inside a Chinese candidate window are never
  * hijacked.
- * @module dsh-mindplan/client/Outline
+ * @module dsh-mindmap/client/Outline
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { ancestors, flatten, toItems, type OutlineDoc, type OutlineNode } from '../shared/model.ts'
@@ -18,7 +18,7 @@ import type { DocumentState } from './useDocument.ts'
 import { Icon, useDialogs, type MenuState } from './ui.tsx'
 
 const INDENT = 24
-const DRAG_MIME = 'application/x-dsh-mindplan-node'
+const DRAG_MIME = 'application/x-dsh-mindmap-node'
 
 type Drop = { id: string; pos: ops.DropPosition } | null
 

@@ -6,7 +6,7 @@
  * overwritten. Daily automatic backups plus manual backup/restore.
  *
  * Layout: <dir>/library.json, <dir>/docs/<id>.json, <dir>/backups/*.json
- * @module dsh-mindplan/host/storage
+ * @module dsh-mindmap/host/storage
  */
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -147,7 +147,7 @@ export class MindmapStorage {
     const target = file.replace(/\.json$/, `.corrupt-${stamp(this.now(), true)}.json`)
     await rename(file, target).catch(() => {})
     this.warnings.push(`${why}: 已隔离为 ${target}`)
-    console.warn(`[dsh-mindplan] ${why}; quarantined as ${target}`)
+    console.warn(`[dsh-mindmap] ${why}; quarantined as ${target}`)
   }
 
   private async load(): Promise<void> {
@@ -388,7 +388,7 @@ export class MindmapStorage {
     for (const meta of this.library.docs) {
       try { docs.push(await this.loadDoc(meta.id)) } catch { /* skip unreadable */ }
     }
-    return { schema: 1, kind: 'dsh-mindplan-backup', createdAt: this.now(), library: structuredClone(this.library), docs }
+    return { schema: 1, kind: 'dsh-mindmap-backup', createdAt: this.now(), library: structuredClone(this.library), docs }
   }
 
   private async backupInternal(kind: 'daily' | 'manual' | 'pre-restore'): Promise<BackupInfo> {
@@ -407,7 +407,7 @@ export class MindmapStorage {
       await stat(join(this.backupsDir, name))
     } catch (error) {
       if (!isEnoent(error)) return
-      await this.backupInternal('daily').catch(e => console.warn('[dsh-mindplan] daily backup failed:', e))
+      await this.backupInternal('daily').catch(e => console.warn('[dsh-mindmap] daily backup failed:', e))
     }
   }
 
@@ -456,7 +456,7 @@ export class MindmapStorage {
       if ('name' in source) raw = JSON.parse(await this.readBackup(source.name))
       else raw = source.data
       const file = raw as BackupFile
-      if (typeof file !== 'object' || file === null || file.kind !== 'dsh-mindplan-backup' || !Array.isArray(file.docs)) {
+      if (typeof file !== 'object' || file === null || file.kind !== 'dsh-mindmap-backup' || !Array.isArray(file.docs)) {
         throw new StorageError('invalid_input', '不是有效的思维导图备份文件')
       }
       const library = sanitizeLibrary(file.library)

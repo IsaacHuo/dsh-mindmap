@@ -38,6 +38,6 @@ jobs:
         run: |
           npm pack
           flags=""; if echo "${GITHUB_REF_NAME}" | grep -q -- '-'; then flags="--prerelease"; fi
-          gh release create "${GITHUB_REF_NAME}" dsh-mindplan-*.tgz --title "${GITHUB_REF_NAME}" --generate-notes $flags
+          gh release create "${GITHUB_REF_NAME}" huoweifang-dsh-mindmap-*.tgz --title "${GITHUB_REF_NAME}" --generate-notes $flags
         env:
           GH_TOKEN: ${{ github.token }}

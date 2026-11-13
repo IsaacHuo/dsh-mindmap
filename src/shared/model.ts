@@ -3,7 +3,7 @@
  * the host store. Nodes live in a flat map; each node owns an ordered child-id
  * array. Ids are stable for the life of a node: moves, merges and undo never
  * re-key a node.
- * @module dsh-mindplan/shared/model
+ * @module dsh-mindmap/shared/model
  */
 
 /** One outline node. `checked`: undefined/null = plain node, boolean = checklist item. */

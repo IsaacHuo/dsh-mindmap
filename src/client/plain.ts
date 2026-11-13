@@ -1,6 +1,6 @@
 /**
  * Plain-text view of inline Markdown (mind map labels, exports).
- * @module dsh-mindplan/client/plain
+ * @module dsh-mindmap/client/plain
  */
 /** Strip inline markup (for the mind map and exports that want plain text). */
 export function plainText(text: string): string {

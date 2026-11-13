@@ -2,7 +2,7 @@
  * Horizontal mind-map layout (root on the left, children to the right) and a
  * standalone SVG serializer used for SVG / PNG export. Layout is a pure
  * function of the document, the shown root and a text-measuring callback.
- * @module dsh-mindplan/client/mapLayout
+ * @module dsh-mindmap/client/mapLayout
  */
 import type { OutlineDoc } from '../shared/model.ts'
 import { plainText } from './plain.ts'

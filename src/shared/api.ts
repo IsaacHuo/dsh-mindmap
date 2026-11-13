@@ -1,12 +1,12 @@
 /**
  * Wire contract between the browser half and the host routes.
- * @module dsh-mindplan/shared/api
+ * @module dsh-mindmap/shared/api
  */
 import type { DocMeta, Folder, Library, OutlineDoc } from './model.ts'
 import type { SearchHit } from './search.ts'
 
 /** Route prefix on the shared DSH webserver. */
-export const ROUTE_PREFIX = '/dsh-mindplan/api'
+export const ROUTE_PREFIX = '/dsh-mindmap/api'
 
 /** Error codes. */
 export type ApiErrorCode = 'invalid_input' | 'not_found' | 'conflict' | 'too_large' | 'internal'
@@ -18,5 +18,5 @@ export interface CreateDocBody { title?: string; folderId?: string | null; markd
 export interface SaveDocBody { doc: OutlineDoc; baseRevision: number }
 export interface PatchMetaBody { title?: string; folderId?: string | null; favorite?: boolean }
 export interface BackupInfo { name: string; size: number; createdAt: number }
-export interface BackupFile { schema: 1; kind: 'dsh-mindplan-backup'; createdAt: number; library: Library; docs: OutlineDoc[] }
+export interface BackupFile { schema: 1; kind: 'dsh-mindmap-backup'; createdAt: number; library: Library; docs: OutlineDoc[] }
 export type { DocMeta, Folder, Library, OutlineDoc, SearchHit }

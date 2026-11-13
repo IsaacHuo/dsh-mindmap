@@ -1,6 +1,6 @@
 // Local harness: serves the built client inside a minimal fake DSH page
 // (React UMD + __ModuleLoader__ + mock slots) and mounts the REAL host half
-// (lib/index.js) on a plain http server. Data dir: $DSH_MINDPLAN_DIR
+// (lib/index.js) on a plain http server. Data dir: $DSH_MINDMAP_DIR
 // (default .tmp/harness-data). Usage: node scripts/harness.mjs [port]
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-process.env.DSH_MINDPLAN_DIR ||= resolve(root, '.tmp/harness-data')
+process.env.DSH_MINDMAP_DIR ||= resolve(root, '.tmp/harness-data')
 const host = await import(pathToFileURL(join(root, 'lib/index.js')).href)
 
 const routes = []
@@ -26,7 +26,7 @@ const files = {
   '/client.js': 'lib/client.js',
 }
 
-const page = (dark) => '<!doctype html><html><head><meta charset="utf-8"><title>dsh-mindplan harness</title>' +
+const page = (dark) => '<!doctype html><html><head><meta charset="utf-8"><title>dsh-mindmap harness</title>' +
   '<style>html,body{margin:0;height:100%;font-family:system-ui,"Microsoft YaHei",sans-serif}' +
   'body{display:flex;background:var(--dsw-bg,#fff);color:var(--dsw-text,#222)}' +
   'body[data-ds-dark-theme]{--dsw-bg:#1e1f22;--dsw-bg-panel:#26272b;--dsw-bg-hover:#2f3035;--dsw-bg-elevated:#2b2c30;--dsw-text:#e6e6e6;--dsw-text-primary:#f2f2f2;--dsw-text-secondary:#9a9ca3;--dsw-border:#35363b;--dsw-border-strong:#45464c;--dsw-accent:#5b8cff}' +
@@ -35,7 +35,7 @@ const page = (dark) => '<!doctype html><html><head><meta charset="utf-8"><title>
   '<script>window.__mods={};window.__ModuleLoader__={load:function(d){var R=window.React;var jsx=function(t,p,k){var q=Object.assign({},p);var c=q.children;delete q.children;if(k!==undefined)q.key=k;return c===undefined?R.createElement(t,q):R.createElement(t,q,c)};var jsxs=function(t,p,k){var q=Object.assign({},p);var c=q.children||[];delete q.children;if(k!==undefined)q.key=k;return R.createElement.apply(null,[t,q].concat(c))};' +
   'var mods={react:R,"react-dom":window.ReactDOM,"react-dom/client":window.ReactDOM,"react/jsx-runtime":{jsx:jsx,jsxs:jsxs,Fragment:R.Fragment}};window.__mods[d.id]=d.factory(function(n){if(!(n in mods))throw new Error("missing module "+n);return mods[n]})}};</script>' +
   '<script src="/client.js"></script></head><body' + (dark ? ' data-ds-dark-theme' : '') + '><div id="rail"></div><div id="root"></div><script>' +
-  'var m=window.__mods["dsh-mindplan"];var mains=[],side=[];var slots={inject:function(s,f){return f()},register:function(meta,C){(meta.name==="main"?mains:side).push({meta:meta,C:C});return function(){}}};' +
+  'var m=window.__mods["@huoweifang/dsh-mindmap"];var mains=[],side=[];var slots={inject:function(s,f){return f()},register:function(meta,C){(meta.name==="main"?mains:side).push({meta:meta,C:C});return function(){}}};' +
   'm.apply({get:function(n){return n==="slots"?slots:undefined},effect:function(f){window.__dispose=f()}});' +
   'var R=React;side.forEach(function(s){var el=document.createElement("div");el.id="rail-"+s.meta.id;document.getElementById("rail").appendChild(el);ReactDOM.createRoot(el).render(R.createElement(R.Fragment,null,R.createElement(s.C,{size:16}),R.createElement("span",null,s.meta.label())))});' +
   'window.__harness={main:mains.map(function(x){return x.meta.key}),side:side.map(function(x){return x.meta.label()})};' +
@@ -53,5 +53,5 @@ const server = createServer(async (req, res) => {
 })
 const port = Number(process.argv[2] ?? process.env.HARNESS_PORT ?? 0)
 server.listen(port, '127.0.0.1', () => {
-  console.log('harness http://127.0.0.1:' + server.address().port + '/  data=' + process.env.DSH_MINDPLAN_DIR)
+  console.log('harness http://127.0.0.1:' + server.address().port + '/  data=' + process.env.DSH_MINDMAP_DIR)
 })

@@ -4,7 +4,7 @@
  * "# title" heading; import accepts that plus -,*,+,1. lists, # headings as
  * levels, tab/2/4-space indents and plain indented text (for paste).
  * Export → import is lossless for text, order, nesting and checklist state.
- * @module dsh-mindplan/shared/markdown
+ * @module dsh-mindmap/shared/markdown
  */
 import type { OutlineDoc, TreeItem } from './model.ts'
 

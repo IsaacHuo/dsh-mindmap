@@ -36,7 +36,7 @@ const client = await build({
   logLevel: 'warning',
 })
 const code = client.outputFiles[0].text
-const wrapped = 'window.__ModuleLoader__.load({id:"dsh-mindplan",factory:function(require){var module={exports:{}},exports=module.exports;\n' + code + '\nreturn module.exports}});\n'
+const wrapped = 'window.__ModuleLoader__.load({id:"@huoweifang/dsh-mindmap",factory:function(require){var module={exports:{}},exports=module.exports;\n' + code + '\nreturn module.exports}});\n'
 await writeFile(join(lib, 'client.js'), wrapped)
 const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 console.log('built', pkg.name, pkg.version, '→ lib/index.js, lib/client.js (' + (wrapped.length / 1024).toFixed(1) + ' KB)')

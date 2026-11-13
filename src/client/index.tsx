@@ -1,16 +1,16 @@
 /**
- * Client (web GUI) half of dsh-mindplan: registers the 思维导图 page in the main
+ * Client (web GUI) half of dsh-mindmap: registers the 思维导图 page in the main
  * slot and its entry in the sidebar panel list. apply() never throws.
- * @module dsh-mindplan/client
+ * @module dsh-mindmap/client
  */
 import type { ReactNode } from 'react'
 import { App } from './App.tsx'
 import { installStyles } from './styles.ts'
 
-export const name = 'dsh-mindplan/client'
+export const name = 'dsh-mindmap/client'
 export const inject = ['slots']
 
-const PANEL_ID = 'dsh-mindplan'
+const PANEL_ID = 'dsh-mindmap'
 
 interface SlotsFace {
   inject(slot: string, factory: () => () => void): () => void
@@ -47,11 +47,11 @@ export function apply(ctx: ClientContext): void {
     disposers.push(slots.inject('main', () => slots.register({ name: 'main', key: PANEL_ID }, Page)))
     disposers.push(slots.inject('sidebar.panellist', () => slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => '思维导图' }, MindmapIcon)))
   } catch (error) {
-    console.error('[dsh-mindplan] client mount failed:', error)
+    console.error('[dsh-mindmap] client mount failed:', error)
   }
   try {
-    ctx.effect?.(() => () => { for (const d of disposers.splice(0).reverse()) { try { d() } catch (e) { console.warn('[dsh-mindplan] dispose failed:', e) } } }, 'dsh-mindplan: client mount')
+    ctx.effect?.(() => () => { for (const d of disposers.splice(0).reverse()) { try { d() } catch (e) { console.warn('[dsh-mindmap] dispose failed:', e) } } }, 'dsh-mindmap: client mount')
   } catch (error) {
-    console.error('[dsh-mindplan] client effect failed:', error)
+    console.error('[dsh-mindmap] client effect failed:', error)
   }
 }

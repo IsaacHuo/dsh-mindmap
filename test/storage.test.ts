@@ -10,7 +10,7 @@ import * as ops from '../src/shared/ops.ts'
 import type { OutlineDoc } from '../src/shared/model.ts'
 
 async function tempDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'dsh-mindplan-test-'))
+  return mkdtemp(join(tmpdir(), 'dsh-mindmap-test-'))
 }
 
 test('storage: create, save with revision check, reload from disk', async () => {
@@ -97,7 +97,7 @@ test('routes: envelope, content-type guard, id validation, conflict', async () =
   const server: Server = createServer((req, res) => { void handler(req, res) })
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()))
   const port = (server.address() as { port: number }).port
-  const base = `http://127.0.0.1:${port}/dsh-mindplan/api`
+  const base = `http://127.0.0.1:${port}/dsh-mindmap/api`
   const post = (p: string, body: unknown, type = 'application/json') => fetch(base + p, { method: 'POST', headers: { 'content-type': type }, body: JSON.stringify(body) })
   try {
     const created = await (await post('/docs', { markdown: '# 2027 个人规划\n\n- 学习\n  - Rust' })).json() as { ok: true; value: { doc: OutlineDoc } }
@@ -121,7 +121,7 @@ test('routes: envelope, content-type guard, id validation, conflict', async () =
     const backups = await (await fetch(base + '/backups')).json() as { value: Array<{ name: string }> }
     assert.ok(backups.value.length >= 1)
     const dl = await fetch(base + '/backups/' + backups.value[0]!.name)
-    assert.equal(JSON.parse(await dl.text()).kind, 'dsh-mindplan-backup')
+    assert.equal(JSON.parse(await dl.text()).kind, 'dsh-mindmap-backup')
   } finally {
     server.close()
     await rm(dir, { recursive: true, force: true })
