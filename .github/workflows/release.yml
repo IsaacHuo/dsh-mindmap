@@ -1,0 +1,43 @@
+name: Release
+
+# Runs only when a maintainer pushes a version tag (v0.1.0, v0.2.0-rc.1, ...).
+# Requires the repository secret NPM_TOKEN (npm automation token).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - name: Tag matches package.json version
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
+      - run: npm run check
+      - run: git diff --exit-code -- lib
+      - run: npm run pack:check
+      - name: Publish to npm
+        run: |
+          if echo "${GITHUB_REF_NAME}" | grep -q -- '-'; then tag=next; else tag=latest; fi
+          npm publish --provenance --access public --tag "$tag"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: GitHub Release
+        run: |
+          npm pack
+          flags=""; if echo "${GITHUB_REF_NAME}" | grep -q -- '-'; then flags="--prerelease"; fi
+          gh release create "${GITHUB_REF_NAME}" dsh-mindplan-*.tgz --title "${GITHUB_REF_NAME}" --generate-notes $flags
+        env:
+          GH_TOKEN: ${{ github.token }}

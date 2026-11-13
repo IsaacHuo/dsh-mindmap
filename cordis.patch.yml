@@ -1,0 +1,7 @@
+# dsh-mindplan bundle patch: inserts the plugin row into the profile roster.
+# The node half (exports ".") registers the /dsh-mindplan/api routes on the
+# shared DSH webserver; the dsh.client declaration loads exports "./client"
+# in the web GUI, which registers the 思维导图 sidebar row and main page.
+- insert:
+    - id: dsh-mindplan
+      name: dsh-mindplan
