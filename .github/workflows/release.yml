@@ -7,13 +7,28 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual run: only tests the npm OIDC token exchange, never publishes.
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
+  oidc-check:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exchange GitHub OIDC token with npm (no publish, token not printed)
+        run: |
+          id="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)"
+          echo "claims:"; echo "$id" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq '{repository, repository_owner, workflow_ref, job_workflow_ref, ref, environment}' || true
+          code="$(curl -sS -o resp.json -w '%{http_code}' -X POST -H "Authorization: Bearer $id" https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@huoweifang%2fdsh-mindmap)"
+          echo "exchange HTTP $code"
+          jq 'del(.token)' resp.json 2>/dev/null || head -c 400 resp.json
+
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
