@@ -302,6 +302,66 @@ try {
     assert.equal(await page.$('.mm-shortcuts'), null)
   })
 
+  await step('v0.2.1 map drag does not select text', async () => {
+    await clickText('[role=tab]', '导图')
+    await page.waitForSelector('[data-map-node]')
+    const box = await page.$eval('.mm-map', e => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height } })
+    const sel = () => page.evaluate(() => window.getSelection()?.toString() ?? '')
+    // pan the empty canvas sideways
+    await page.mouse.move(box.x + 20, box.y + box.h - 60)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) await page.mouse.move(box.x + 20 + i * 40, box.y + box.h - 60 - i * 15)
+    await page.mouse.up()
+    assert.equal(await sel(), '', 'no selection after pan')
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('mm-map')), true, 'map keeps focus')
+    // press on a node and drag across the canvas without dropping on a target
+    const n = await page.evaluateHandle(() => [...document.querySelectorAll('[data-map-node]')].find(g => g.textContent.trim() === '英语'))
+    const nb = await n.asElement().boundingBox()
+    await page.mouse.move(nb.x + nb.width / 2, nb.y + nb.height / 2)
+    await page.mouse.down()
+    for (let i = 1; i <= 8; i++) await page.mouse.move(nb.x + nb.width / 2 - i * 50, nb.y + nb.height / 2 + i * 30)
+    await page.mouse.up()
+    assert.equal(await sel(), '', 'no selection after node drag')
+    await clickText('[role=tab]', '大纲')
+    await page.waitForSelector('[data-node-id]')
+  })
+
+  await step('v0.2.1 map keyboard: Tab child, Esc drops empty node, Delete', async () => {
+    await clickText('[role=tab]', '\u5bfc\u56fe')
+    await page.waitForSelector('[data-map-node]')
+    const clickNode = async t => { const h = await page.evaluateHandle(x => [...document.querySelectorAll('[data-map-node]')].find(g => g.textContent.trim() === x), t); assert.ok(h.asElement(), 'map node ' + t); await h.asElement().click(); await sleep(120) }
+    const before = (await docTree()).tree
+    const withTmp = { '\u5b66\u4e60': ['\u82f1\u8bed', { '\u7f16\u7a0b': ['\u4e34\u65f6'] }] }
+    await clickNode('\u7f16\u7a0b'); await key('Tab')
+    await page.waitForSelector('textarea.mm-map-edit', { timeout: 3000 })
+    await key('Escape'); await sleep(200)
+    assert.equal(await page.$('textarea.mm-map-edit'), null, 'editor closed')
+    await saved().catch(() => {})
+    assert.deepEqual((await docTree()).tree, before, 'Esc on new empty node leaves no node')
+    await clickNode('\u7f16\u7a0b'); await key('Tab'); await page.waitForSelector('textarea.mm-map-edit')
+    await type('\u4e34\u65f6'); await key('Enter'); await sleep(150); await saved()
+    assert.deepEqual((await docTree()).tree[2], withTmp, JSON.stringify((await docTree()).tree))
+    await clickNode('\u4e34\u65f6'); await key('Delete'); await sleep(150); await saved()
+    assert.deepEqual((await docTree()).tree, before, 'Delete removes node')
+    await key('z', 'Control'); await sleep(150); await saved()
+    assert.deepEqual((await docTree()).tree[2], withTmp, 'undo restores')
+    await key('y', 'Control'); await sleep(150); await saved()
+    await clickText('[role=tab]', '\u5927\u7eb2'); await page.waitForSelector('[data-node-id]')
+  })
+
+  await step('v0.2.1 narrow layouts do not overflow horizontally', async () => {
+    for (const w of [760, 540, 400]) {
+      await page.setViewport({ width: w, height: 800 }); await sleep(250)
+      for (const tab of ['\u5bfc\u56fe', '\u5927\u7eb2']) {
+        await clickText('[role=tab]', tab); await sleep(200)
+        const o = await page.evaluate(() => { const out = []; const app = document.querySelector('.mm-app').getBoundingClientRect(); for (const sel of ['.mm-toolbar', '.mm-main', '.mm-map-ctrl', '.mm-statusbar']) { const el = document.querySelector(sel); if (!el) continue; const r = el.getBoundingClientRect(); if (r.right > app.right + 1 || r.left < app.left - 1) out.push(sel + ' rect ' + Math.round(r.left) + '..' + Math.round(r.right)); if (sel === '.mm-toolbar' && el.scrollWidth > el.clientWidth + 1) out.push('toolbar scroll ' + el.scrollWidth + '>' + el.clientWidth) } return out })
+        await page.screenshot({ path: join(tmp, 'e2e-narrow-' + w + '-' + (tab === '\u5bfc\u56fe' ? 'map' : 'outline') + '.png') })
+        assert.deepEqual(o, [], w + 'px ' + tab + ': ' + o.join('; '))
+      }
+    }
+    await page.setViewport({ width: 1280, height: 800 }); await sleep(200)
+  })
+
   await step('no page errors', async () => { assert.deepEqual(errors, []) })
 } finally {
   await browser.close()

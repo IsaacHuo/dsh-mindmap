@@ -1,6 +1,8 @@
 # dsh-mindmap
 
-Outline notes with a live mind-map view for the [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) web GUI. Both views edit the same document. Everything is stored locally: no account, no cloud, no AI, no runtime dependencies.
+An **outliner and mind-map plugin** for [DeepSeek Harness](https://github.com/deepseek-ai) (DSH): write a nested outline with keyboard-first editing, switch to a live mind map of the same document, and keep everything in local files with autosave and backups.
+
+**Zero configuration**: install and open 思维导图 in the sidebar. No account, token or extra service required.
 
 [简体中文](README.zh-CN.md)
 
@@ -34,7 +36,7 @@ dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 From GitHub (pin a tag; `lib/` is committed, so no build step runs on install):
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1
 ```
 
 Restart DSH. A **思维导图** entry appears in the sidebar.
@@ -43,7 +45,7 @@ Restart DSH. A **思维导图** entry appears in the sidebar.
 
 ```sh
 dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0   # GitHub
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1   # GitHub
 ```
 
 npm installs can also be updated from the DSH plugin manager. Restart DSH afterwards.

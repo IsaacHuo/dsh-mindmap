@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1
+
+Fixes
+- Dragging the mind-map canvas or a node no longer selects text on the page.
+- Alt+1-9 (open favorite) only responds while the mind-map page has focus, not in other DSH panels.
+- Removed obsolete mind-map style rules that the 0.2 map styles had replaced.
+- Package and README descriptions reworded.
+
+Tests
+- New e2e steps: no text selection after map drag, map keyboard editing (Tab, Esc on an empty new node, Delete, undo/redo), narrow layouts at 760/540/400 px.
+
 ## 0.2.0
 
 Data safety

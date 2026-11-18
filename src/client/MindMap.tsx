@@ -259,6 +259,7 @@ export function MindMap(props: MindMapProps): ReactNode {
     try { localStorage.setItem(HINT_KEY, '1') } catch { /* storage unavailable */ }
   }
   const refocus = (): void => { box.current?.focus({ preventScroll: true }) }
+  const clearSelection = (): void => { const s = window.getSelection(); if (s !== null && !s.isCollapsed) s.removeAllRanges() }
 
   // ---------- edits ----------
   const dropFresh = (): void => {
@@ -481,6 +482,10 @@ export function MindMap(props: MindMapProps): ReactNode {
       if (id !== rootId && editing === null) nodeDrag.current = { id, px: e.clientX, py: e.clientY, started: false }
       return
     }
+    // Cancel the default so the press cannot begin a text selection; focus by hand.
+    e.preventDefault()
+    clearSelection()
+    refocus()
     const v = viewRef.current
     pan.current = { px: e.clientX, py: e.clientY, vx: v.x, vy: v.y, moved: false }
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -492,6 +497,7 @@ export function MindMap(props: MindMapProps): ReactNode {
       if (!nd.started) {
         if (Math.abs(e.clientX - nd.px) + Math.abs(e.clientY - nd.py) < DRAG_THRESHOLD) return
         nd.started = true
+        clearSelection()
         e.currentTarget.setPointerCapture(e.pointerId)
       }
       const p = toMap(e.clientX, e.clientY)
@@ -540,6 +546,7 @@ export function MindMap(props: MindMapProps): ReactNode {
       const hit = nodeOf(e)
       if (hit === null || e.button !== 0) return
       e.stopPropagation()
+      e.preventDefault()
       if (!hit.toggle) { select(hit.id); refocus() }
     },
     onClick: (e: ReactMouseEvent) => { const hit = nodeOf(e); if (hit?.toggle === true) { e.stopPropagation(); toggle(hit.id); refocus() } },

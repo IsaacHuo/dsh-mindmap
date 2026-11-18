@@ -13,6 +13,9 @@ const palette = (dark: boolean): string => (dark ? BRANCH_DARK : BRANCH_LIGHT)
   .join('\n')
 
 export const MAP_CSS = [
+  // Dragging the canvas or a node must never start a text selection.
+  '.mm-map{user-select:none;-webkit-user-select:none}',
+  '.mm-map .mm-map-edit{user-select:text;-webkit-user-select:text}',
   palette(false),
   palette(true),
   '.mm-map-edge{fill:none;stroke:var(--mm-bc,var(--mm-border-strong));stroke-width:1.5}',

@@ -109,6 +109,9 @@ export function Sidebar(props: SidebarProps): ReactNode {
   useEffect(() => {
     const key = (e: globalThis.KeyboardEvent): void => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !/^Digit[1-9]$/.test(e.code)) return
+      // Only while the user is in this page, not in other DSH panels.
+      const t = e.target
+      if (!(t instanceof Element) || (t !== document.body && t.closest('.mm-app') === null)) return
       const m = favorites[Number(e.code.slice(5)) - 1]
       if (m === undefined) return
       e.preventDefault()

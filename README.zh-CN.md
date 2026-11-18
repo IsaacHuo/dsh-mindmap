@@ -1,6 +1,8 @@
 # dsh-mindmap（思维导图）
 
-[DeepSeek Harness](https://github.com/deepseek-ai)（DSH）Web 界面插件：大纲笔记 + 思维导图，两种视图编辑同一份文档。数据全部保存在本机：无账号、无云端、无 AI、无运行时依赖。
+[DeepSeek Harness](https://github.com/deepseek-ai)（DSH）的**大纲笔记与思维导图插件**：用键盘快速写多级大纲，一键切换为同一份文档的实时思维导图，数据以本地文件保存，自动保存并定期备份。
+
+**零配置**：安装后在侧边栏打开「思维导图」即可使用，无需账号、Token 或额外服务。
 
 [English](README.md)
 
@@ -34,7 +36,7 @@ dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 从 GitHub 安装（固定到 tag；仓库提交了 `lib/`，安装时不需要构建）：
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1
 ```
 
 重启 DSH，侧边栏出现「思维导图」。
@@ -43,7 +45,7 @@ dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0
 
 ```sh
 dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.0   # GitHub
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1   # GitHub
 ```
 
 npm 安装的版本也可以在 DSH 插件管理里更新。更新后重启 DSH。
