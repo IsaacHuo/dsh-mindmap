@@ -217,6 +217,8 @@ try {
   })
 
   const editRow = async text => {
+    // Already editing it (e.g. closing the find bar returns the caret there).
+    if (await focusedText() === text) return
     const h = await page.evaluateHandle(t => [...document.querySelectorAll('[data-node-id]')].find(r => r.querySelector('.mm-text')?.textContent === t)?.querySelector('.mm-text'), text)
     assert.ok(h.asElement(), 'row ' + text)
     await h.asElement().click(); await sleep(120)
@@ -239,6 +241,7 @@ try {
     assert.ok(texts.includes('PA') && texts.includes('PB'), texts.join(','))
     await page.click('.mm-findbar input[aria-label=替换为]'); await key('Escape')
     assert.equal(await page.$('.mm-findbar'), null, 'find bar closed')
+    assert.equal(await focusedText(), 'PA', 'closing find returns to the edited node')
     await saved()
     const { tree } = await docTree()
     assert.deepEqual(tree, ['健身', { 工作: ['PA', 'PB'] }, { 学习: ['英语', '编程'] }])
@@ -360,6 +363,48 @@ try {
       }
     }
     await page.setViewport({ width: 1280, height: 800 }); await sleep(200)
+  })
+
+  await step('v0.2.2 new-folder dialog is opaque and themed inside .mm-app', async () => {
+    await page.click('button[aria-label="新建文件夹"]')
+    await page.waitForSelector('.mm-modal', { timeout: 3000 })
+    const s = await page.$eval('.mm-modal', el => { const cs = getComputedStyle(el); return { inApp: el.closest('.mm-app') !== null, bg: cs.backgroundColor, border: cs.borderTopWidth, pos: getComputedStyle(el.parentElement).position } })
+    await page.screenshot({ path: join(tmp, 'e2e-folder-dialog.png') })
+    assert.equal(s.inApp, true, 'dialog inside .mm-app')
+    assert.ok(s.bg !== 'rgba(0, 0, 0, 0)' && s.bg !== 'transparent', 'opaque background ' + s.bg)
+    assert.notEqual(s.border, '0px', 'has a border')
+    await key('Escape'); await sleep(100)
+    assert.equal(await page.$('.mm-modal'), null, 'Esc closes')
+  })
+
+  await step('v0.2.2 map opens 向右 and edits inside the node box', async () => {
+    await clickText('[role=tab]', '\u5bfc\u56fe')
+    await page.waitForSelector('[data-map-node]')
+    const pressed = await page.evaluate(() => Array.from(document.querySelectorAll('.mm-map-seg button'), b => b.textContent + ':' + b.getAttribute('aria-pressed')))
+    assert.ok(pressed.includes('向右:true'), 'default right ' + pressed.join(','))
+    const h = await page.evaluateHandle(() => [...document.querySelectorAll('.mm-map-node')].find(g => g.textContent.trim() === '英语'))
+    const nb = await h.asElement().$eval('rect.mm-box', r => { const b = r.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height } })
+    await h.asElement().click({ count: 2 })
+    await page.waitForSelector('textarea.mm-map-edit')
+    await sleep(100)
+    const ed = await page.$eval('textarea.mm-map-edit', el => { const b = el.getBoundingClientRect(); const cs = getComputedStyle(el); return { x: b.left, y: b.top, w: b.width, h: b.height, border: cs.borderTopWidth, bg: cs.backgroundColor } })
+    await page.screenshot({ path: join(tmp, 'e2e-map-edit.png') })
+    assert.ok(Math.abs(ed.x - nb.x) <= 2 && Math.abs(ed.y - nb.y) <= 2, 'editor aligned ' + JSON.stringify({ ed, nb }))
+    assert.ok(Math.abs(ed.h - nb.h) <= 2, 'same height ' + ed.h + ' vs ' + nb.h)
+    assert.equal(ed.border, '0px', 'editor has no frame of its own')
+    assert.equal(ed.bg, 'rgba(0, 0, 0, 0)', 'editor transparent')
+    assert.equal(await page.$('.mm-map-selection'), null, 'no separate selection ring while editing')
+    await key('Escape'); await sleep(100)
+    assert.equal(await page.$('textarea.mm-map-edit'), null)
+  })
+
+  await step('v0.2.2 Ctrl+F from map opens find in outline', async () => {
+    await page.focus('.mm-map')
+    await key('f', 'Control')
+    await page.waitForSelector('[data-node-id]', { timeout: 3000 })
+    await sleep(200)
+    assert.ok(await page.$('.mm-findbar input, .mm-find-bar input, input[aria-label*="查找"]'), 'find bar open')
+    await key('Escape'); await sleep(100)
   })
 
   await step('no page errors', async () => { assert.deepEqual(errors, []) })

@@ -109,17 +109,17 @@ export function wrap(text: string, measure: Measure, bold: boolean, size = FONT_
   for (const para of plainText(text).split('\n')) {
     if (m(para) <= MAX_TEXT_W) { out.push(para); continue }
     let line = ''
-    for (const token of para.match(TOKEN_RE) ?? []) {
-      if (m(line + token) <= MAX_TEXT_W || line.length === 0) {
-        if (m(token) > MAX_TEXT_W && line.length === 0) {
-          for (const ch of token) {
-            if (m(line + ch) > MAX_TEXT_W && line.length > 0) { out.push(line); line = '' }
-            line += ch
-          }
-        } else line += token
-      } else {
+    for (let token of para.match(TOKEN_RE) ?? []) {
+      if (line.length > 0 && m(line + token) > MAX_TEXT_W) {
         out.push(line.trimEnd())
-        line = token.trimStart()
+        line = ''
+        token = token.trimStart()
+      }
+      if (m(line + token) <= MAX_TEXT_W) { line += token; continue }
+      // A token wider than a whole line (long URL, no spaces): split by character.
+      for (const ch of token) {
+        if (m(line + ch) > MAX_TEXT_W && line.length > 0) { out.push(line); line = '' }
+        line += ch
       }
     }
     out.push(line)
@@ -365,7 +365,8 @@ const TITLE_H = 44
 export function mapToSvg(layout: MapLayout, colors: MapColors, opts: ExportOptions = {}): { svg: string; width: number; height: number } {
   const M = 32
   const bgMode = opts.background ?? 'theme'
-  const c: MapColors = bgMode === 'white' && colors.dark === true ? { ...LIGHT_COLORS, font: colors.font } : colors
+  // A transparent export is usually pasted onto a light page: light-theme colours too.
+  const c: MapColors = bgMode !== 'theme' && colors.dark === true ? { ...LIGHT_COLORS, font: colors.font } : colors
   const dark = c.dark === true
   const title = opts.title !== undefined && opts.title !== null && opts.title.trim() !== '' ? opts.title.trim() : null
   const titleH = title !== null ? TITLE_H : 0
@@ -479,10 +480,10 @@ export function themeColors(el: Element): MapColors {
   }
 }
 
-/** The doc's saved map layout (default 'both'). Tolerates docs without `view`. */
+/** The doc's saved map layout (default 'right'). Tolerates docs without `view`. */
 export function docMapLayout(doc: OutlineDoc): MapLayoutMode {
   const v = (doc as OutlineDoc & { view?: { mapLayout?: unknown } }).view
-  return v?.mapLayout === 'right' ? 'right' : 'both'
+  return v?.mapLayout === 'both' ? 'both' : 'right'
 }
 
 /**

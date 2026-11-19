@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.2
+
+Fixes
+- Dialogs (new folder, rename, confirm, backups) and toasts render inside the plugin, so they get the theme background, border and position instead of floating unstyled over the page. A confirm opened from a panel returns to that panel; Esc during IME composition no longer closes a dialog; page shortcuts are ignored while a dialog is open.
+- Mind map opens in 向右 layout by default (docs that saved 两侧 keep it); the fit starts at the left edge.
+- Editing a map node now types inside the node's own box: the editor is frameless and transparent, matches the node's font, padding and position, and the box grows with the text. No second frame or overlapping selection ring.
+- Map: switching windows no longer commits and closes the editor; clicking a toolbar button while editing keeps its focus; IME input on a selected node opens the editor; Ctrl+↑/↓ stays inside a zoomed subtree; moved or dropped nodes are revealed in auto-collapsed branches; Esc cancels a node drag; the view only scrolls to a node when the selection changes; Firefox line/page wheel deltas are normalised; long URLs after a word wrap within the node width; transparent SVG export from the dark theme uses light colours; the hint is hidden on narrow windows.
+- Sidebar: renaming a favourite renames only the clicked row; Enter/Esc returns focus to the row; Esc in search respects IME; trash rows keep their time on hover; storage warnings are toasted once, not on every refresh.
+- Outline: Ctrl+F from the map opens the find bar; closing it returns the caret to the node; clicking fold or check boxes keeps editing focus; the tag view hides fold buttons and shows an empty-result message; textareas re-fit on width change; note text aligns with the note editor; Tab inside a note no longer leaves it; a trailing soft newline is visible.
+
+Tests
+- Unit: default map layout, wrap width bound.
+- e2e: themed opaque dialog inside the plugin, default 向右 layout, in-place editor aligned with its node with no extra frame, Ctrl+F from the map.
+
 ## 0.2.1
 
 Fixes

@@ -134,34 +134,60 @@ type Pending =
   | { kind: 'prompt'; title: string; value: string; placeholder: string; ok: string; multiline: boolean; message?: string; resolve: (v: string | null) => void }
   | { kind: 'custom'; title: string; body: (close: () => void) => ReactNode }
 
-/** Provides dialogs to its subtree and renders them. */
+/** Rendering state shared between DialogHost and DialogOutlet. */
+interface DialogView { stack: Pending[]; toast: { message: string; action?: ToastAction } | null; pop: (p: Pending) => void; clearToast: () => void }
+const DialogViewContext = createContext<DialogView | null>(null)
+
+/**
+ * Provides dialogs to its subtree. Rendering happens in <DialogOutlet>, which
+ * must sit inside .mm-app so the --mm-* theme variables and positioning apply.
+ * Dialogs stack: a confirm opened from a panel returns to that panel.
+ */
 export function DialogHost(props: { children: ReactNode }): ReactNode {
-  const [pending, setPending] = useState<Pending | null>(null)
+  const [stack, setStack] = useState<Pending[]>([])
   const [toast, setToast] = useState<{ message: string; action?: ToastAction } | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
+  const push = useCallback((p: Pending) => setStack(s => [...s, p]), [])
   const api = useMemo<DialogApi>(() => ({
-    confirm: o => new Promise<boolean>(resolve => setPending({ kind: 'confirm', title: o.title, message: o.message, ok: o.ok ?? '确定', danger: o.danger === true, resolve })),
-    prompt: o => new Promise<string | null>(resolve => setPending({ kind: 'prompt', title: o.title, value: o.value ?? '', placeholder: o.placeholder ?? '', ok: o.ok ?? '确定', multiline: o.multiline === true, message: o.message, resolve })),
-    show: o => setPending({ kind: 'custom', title: o.title, body: o.body }),
+    confirm: o => new Promise<boolean>(resolve => push({ kind: 'confirm', title: o.title, message: o.message, ok: o.ok ?? '确定', danger: o.danger === true, resolve })),
+    prompt: o => new Promise<string | null>(resolve => push({ kind: 'prompt', title: o.title, value: o.value ?? '', placeholder: o.placeholder ?? '', ok: o.ok ?? '确定', multiline: o.multiline === true, message: o.message, resolve })),
+    show: o => push({ kind: 'custom', title: o.title, body: o.body }),
     toast: (message, action) => {
       setToast(action === undefined ? { message } : { message, action })
       window.clearTimeout(toastTimer.current)
       toastTimer.current = window.setTimeout(() => setToast(null), action === undefined ? 2600 : 6000)
     },
-  }), [])
+  }), [push])
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
-  const done = useCallback(() => setPending(null), [])
+  const view = useMemo<DialogView>(() => ({
+    stack,
+    toast,
+    pop: p => setStack(s => s.filter(x => x !== p)),
+    clearToast: () => { setToast(null); window.clearTimeout(toastTimer.current) },
+  }), [stack, toast])
   return (
     <DialogContext.Provider value={api}>
-      {props.children}
-      {pending !== null ? <Dialog pending={pending} onDone={done} /> : null}
+      <DialogViewContext.Provider value={view}>{props.children}</DialogViewContext.Provider>
+    </DialogContext.Provider>
+  )
+}
+
+/** Renders the top dialog and the toast; place it inside .mm-app. */
+export function DialogOutlet(): ReactNode {
+  const v = useContext(DialogViewContext)
+  if (v === null) return null
+  const top = v.stack[v.stack.length - 1]
+  const toast = v.toast
+  return (
+    <>
+      {top !== undefined ? <Dialog key={v.stack.length + ':' + top.title} pending={top} onDone={() => v.pop(top)} /> : null}
       {toast !== null ? (
         <div className="mm-toast" role="status">
           <span>{toast.message}</span>
-          {toast.action !== undefined ? <button type="button" className="mm-toast-btn" onClick={() => { const a = toast.action; setToast(null); window.clearTimeout(toastTimer.current); a?.onClick() }}>{toast.action.label}</button> : null}
+          {toast.action !== undefined ? <button type="button" className="mm-toast-btn" onClick={() => { const a = toast.action; v.clearToast(); a?.onClick() }}>{toast.action.label}</button> : null}
         </div>
       ) : null}
-    </DialogContext.Provider>
+    </>
   )
 }
 
@@ -184,6 +210,8 @@ function Dialog(props: { pending: Pending; onDone: () => void }): ReactNode {
     else if (p.kind === 'prompt') p.resolve(ok ? value : null)
   }
   const onKey = (e: ReactKeyboardEvent): void => {
+    // Esc / Enter during IME composition belong to the IME (dismiss candidates).
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return }
     if (e.key === 'Tab') {
       // Focus trap: keep Tab inside the dialog.
@@ -203,7 +231,7 @@ function Dialog(props: { pending: Pending; onDone: () => void }): ReactNode {
   }
   return (
     <div className="mm-modal-mask" onMouseDown={e => { if (e.target === e.currentTarget) finish(false) }} onKeyDown={onKey}>
-      <div ref={panelRef} className="mm-modal" role="dialog" aria-modal="true" aria-label={p.title}>
+      <div ref={panelRef} className="mm-modal" tabIndex={-1} role="dialog" aria-modal="true" aria-label={p.title}>
         <h3>{p.title}</h3>
         <div className="mm-modal-body">
           {p.kind === 'confirm' && p.message !== undefined ? <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{p.message}</p> : null}

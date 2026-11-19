@@ -17,7 +17,7 @@ import { useDocument } from './useDocument.ts'
 import { Outline } from './Outline.tsx'
 import { MindMap } from './MindMap.tsx'
 import { buildMapExport, MapTooLargeError, pngFits, svgToPng } from './mapLayout.ts'
-import { DialogHost, download, fileName, Icon, PopupMenu, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
+import { DialogHost, DialogOutlet, download, fileName, Icon, PopupMenu, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
 
 type ViewMode = 'outline' | 'map'
 const LS_LAST = 'dsh-mindmap:last-doc'
@@ -48,13 +48,21 @@ function Shell(): ReactNode {
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [sideOpen, setSideOpen] = useState(false)
   const pendingNode = useRef<string | null>(null)
+  const lastWarnings = useRef('')
+  // A new key per menu: a submenu opened from a menu item remounts, so it is re-clamped and focused.
+  const menuKey = useRef(0)
+  const lastMenu = useRef<MenuState | null>(null)
+  if (menu !== lastMenu.current) { lastMenu.current = menu; menuKey.current++ }
 
   const refreshLibrary = useCallback(async () => {
     try {
       const r = await api.library()
       setLibrary(r.library)
       setLibError(null)
-      if (r.warnings.length > 0) dialogs.toast(r.warnings.join('；'))
+      // Toast warnings once, not again on every refresh while they persist.
+      const w = r.warnings.join('；')
+      if (w.length > 0 && w !== lastWarnings.current) dialogs.toast(w)
+      lastWarnings.current = w
       return r.library
     } catch (error) {
       setLibError(errText(error))
@@ -272,7 +280,7 @@ function Shell(): ReactNode {
     if (mod && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F' || e.key === 'h' || e.key === 'H') && doc !== null && t.closest('.mm-side') === null) {
       e.preventDefault()
       setView('outline')
-      setFindRequest(n => n + 1)
+      setFindRequest(n => Math.max(n + 1, Date.now()))
       return
     }
     if (t.closest('textarea,input,.mm-map') !== null) return
@@ -291,6 +299,8 @@ function Shell(): ReactNode {
   useEffect(() => {
     const h = (e: KeyboardEvent): void => {
       if (e.target !== document.body || appRef.current === null || !appRef.current.isConnected) return
+      // Never act on the document behind an open dialog.
+      if (appRef.current.querySelector('.mm-modal-mask') !== null) return
       keyRef.current(e as unknown as React.KeyboardEvent)
     }
     document.addEventListener('keydown', h)
@@ -330,7 +340,7 @@ function Shell(): ReactNode {
                 const m = meta
                 setMenu({ x: r.right - 200, y: r.bottom + 4, items: [
                   { label: m?.favorite === true ? '取消收藏' : '收藏', disabled: m === undefined, onSelect: () => m !== undefined && void patchMeta(m.id, { favorite: !m.favorite }) },
-                  { label: '查找和替换', shortcut: 'Ctrl+F', onSelect: () => { setView('outline'); setFindRequest(n => n + 1) } },
+                  { label: '查找和替换', shortcut: 'Ctrl+F', onSelect: () => { setView('outline'); setFindRequest(n => Math.max(n + 1, Date.now())) } },
                   { label: '全部展开', onSelect: () => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true }) },
                   { label: '全部折叠', onSelect: () => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true }) },
                   { label: '立即保存', onSelect: () => void state.flush() },
@@ -381,7 +391,8 @@ function Shell(): ReactNode {
             onEditInOutline={id => { setView('outline'); reveal(doc, id) }} />
         )}
       </main>
-      {menu !== null ? <PopupMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} /> : null}
+      {menu !== null ? <PopupMenu key={menuKey.current} x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} /> : null}
+      <DialogOutlet />
     </div>
   )
 }
@@ -399,6 +410,19 @@ function DocHeader(props: { doc: OutlineDoc; rootId: string; state: ReturnType<t
     const el = ref.current
     if (el !== null) { el.style.height = '0px'; el.style.height = el.scrollHeight + 'px' }
   })
+  // Re-fit the height when the width changes (window resize, drawer toggle).
+  useEffect(() => {
+    const el = ref.current
+    if (el === null || typeof ResizeObserver === 'undefined') return
+    let w = el.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === w) return
+      w = el.clientWidth
+      el.style.height = '0px'; el.style.height = el.scrollHeight + 'px'
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   // New, untitled, empty document: put the caret in the title.
   useEffect(() => {
     const only = doc.nodes[doc.rootId]!.children

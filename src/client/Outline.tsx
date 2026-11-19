@@ -84,7 +84,7 @@ function caretFromPoint(container: HTMLElement, x: number, y: number, source: st
 
 const isComposing = (e: KeyboardEvent): boolean => e.nativeEvent.isComposing || e.keyCode === 229
 
-const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing: Field | null; selected: boolean; tabStop: boolean; marks: RowMarks; tags: boolean; drop: ops.DropPosition | null; dragging: boolean; ctl: RowControl }): ReactNode {
+const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing: Field | null; selected: boolean; tabStop: boolean; marks: RowMarks; tags: boolean; filtered?: boolean; drop: ops.DropPosition | null; dragging: boolean; ctl: RowControl }): ReactNode {
   const { node, depth, ctl } = props
   const hasKids = node.children.length > 0
   const textRef = useRef<HTMLDivElement>(null)
@@ -96,14 +96,14 @@ const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing
       tabIndex={props.tabStop ? 0 : -1}
       style={{ paddingLeft: depth * INDENT, ['--mm-drop-left' as string]: depth * INDENT + 40 + 'px' }}
       onDragOver={e => ctl.dragOver(e, node.id, depth)} onDrop={ctl.drop} onContextMenu={e => ctl.menu(e, node.id)}>
-      <button type="button" tabIndex={-1} className={'mm-fold' + (node.collapsed === true ? ' mm-closed mm-show' : '')} style={{ visibility: hasKids ? 'visible' : 'hidden' }}
-        aria-label={node.collapsed === true ? '展开' : '折叠'} onClick={() => ctl.toggleFold(node.id)}><Icon name="chevron" size={14} /></button>
+      <button type="button" tabIndex={-1} className={'mm-fold' + (node.collapsed === true ? ' mm-closed mm-show' : '')} style={{ visibility: hasKids && !props.filtered ? 'visible' : 'hidden' }}
+        aria-label={node.collapsed === true ? '展开' : '折叠'} onMouseDown={e => e.preventDefault()} onClick={() => ctl.toggleFold(node.id)}><Icon name="chevron" size={14} /></button>
       <button type="button" tabIndex={-1} className={'mm-bullet' + (hasKids && node.collapsed === true ? ' mm-collapsed' : '')} draggable
         title="点击聚焦，Shift+点击扩展选择，拖动移动" aria-label="聚焦此节点" onClick={e => ctl.bulletClick(e, node.id)} onDragStart={e => ctl.dragStart(e, node.id)} onDragEnd={ctl.dragEnd}>
         <span className="mm-dot" />
       </button>
       {typeof node.checked === 'boolean' ? (
-        <input type="checkbox" className="mm-check" tabIndex={-1} checked={node.checked} aria-label="完成" onChange={() => ctl.toggleCheck(node.id)} />
+        <input type="checkbox" className="mm-check" tabIndex={-1} checked={node.checked} aria-label="完成" onMouseDown={e => e.preventDefault()} onChange={() => ctl.toggleCheck(node.id)} />
       ) : null}
       <div className="mm-body">
         {props.editing === 'text' ? (
@@ -119,7 +119,7 @@ const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing
               if (e.button !== 0) return
               e.preventDefault()
               ctl.startEdit(node.id, textRef.current !== null ? caretFromPoint(textRef.current, e.clientX, e.clientY, node.text) : 'end')
-            }}>{renderInline(node.text, 'i', { marks: props.marks.text, onTag })}</div>
+            }}>{renderInline(node.text, 'i', { marks: props.marks.text, onTag })}{node.text.endsWith('\n') ? '\u200b' : null}</div>
         )}
         {props.editing === 'note' ? (
           <textarea ref={ctl.bindInput} className="mm-note mm-note-input" rows={1} value={note} spellCheck={false} aria-label="备注"
@@ -226,11 +226,16 @@ export function Outline(props: OutlineProps): ReactNode {
   })
 
   // Open the find bar when the nonce changes.
-  const lastFindReq = useRef(props.findRequest)
+  // findRequest is a timestamp. A request made just before this view mounted
+  // (Ctrl+F in the map switches here first) still counts.
+  const lastFindReq = useRef(props.findRequest !== undefined && Date.now() - props.findRequest < 1500 ? -1 : props.findRequest)
+  /** Where the caret was when the find bar opened; restored by closeFind. */
+  const findReturn = useRef<{ id: string; caret: number } | null>(null)
   useEffect(() => {
     if (props.findRequest === undefined || props.findRequest === lastFindReq.current) return
     lastFindReq.current = props.findRequest
     const el = inputRef.current
+    if (el !== null && editingRef.current !== null && fieldRef.current === 'text') findReturn.current = { id: editingRef.current, caret: el.selectionStart }
     const picked = el !== null && el.selectionStart !== el.selectionEnd ? el.value.slice(el.selectionStart, el.selectionEnd) : ''
     const seed = picked.includes('\n') ? '' : picked
     setSel(null)
@@ -276,6 +281,19 @@ export function Outline(props: OutlineProps): ReactNode {
     el.scrollIntoView({ block: 'nearest' })
   }
 
+  // Re-fit the editing textarea when its width changes (window / drawer resize).
+  useEffect(() => {
+    const el = inputRef.current
+    if (el === null || typeof ResizeObserver === 'undefined') return
+    let w = el.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === w) return
+      w = el.clientWidth
+      el.style.height = '0px'; el.style.height = el.scrollHeight + 'px'
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [editing, field])
   useLayoutEffect(() => {
     const el = inputRef.current
     if (el !== null) { el.style.height = '0px'; el.style.height = el.scrollHeight + 'px' }
@@ -403,6 +421,8 @@ export function Outline(props: OutlineProps): ReactNode {
         const stop = (): void => { e.preventDefault(); e.stopPropagation() }
         if (mod && !e.altKey && (k === 'z' || k === 'Z')) { stop(); if (e.shiftKey) propsRef.current.state.redo(); else propsRef.current.state.undo(); return }
         if (mod && !e.altKey && (k === 'y' || k === 'Y')) { stop(); propsRef.current.state.redo(); return }
+        // Tab must not move focus out of the note (and lose the edit).
+        if (k === 'Tab') { stop(); return }
         if (k === 'Escape' || (k === 'Enter' && e.shiftKey && !mod && !e.altKey)) {
           stop()
           const d = docRef.current
@@ -623,6 +643,8 @@ export function Outline(props: OutlineProps): ReactNode {
           { label: n.children.length > 0 ? '删除节点及其子节点' : '删除节点', shortcut: 'Ctrl+Shift+⌫', danger: true, onSelect: () => {
             const { prev, next } = nb(id)
             const after = ops.deleteNode(docRef.current, id)
+            if (after === docRef.current) return
+            if (editingRef.current === id) setEditing(null)
             p.state.apply(after, prev !== undefined && after.nodes[prev] !== undefined ? { focus: { id: prev, caret: 'end' } } : next !== undefined && after.nodes[next] !== undefined ? { focus: { id: next, caret: 0 } } : {})
             dialogs.toast('已删除，可按 Ctrl+Z 撤销')
           } },
@@ -735,8 +757,12 @@ export function Outline(props: OutlineProps): ReactNode {
   }
   const closeFind = (): void => {
     setFind(null)
+    const back = findReturn.current
+    findReturn.current = null
     const el = inputRef.current
     if (el !== null && editingRef.current !== null) el.focus({ preventScroll: true })
+    // The find input took focus and editing ended: go back to where the caret was.
+    else if (back !== null && doc.nodes[back.id] !== undefined) ctl.startEdit(back.id, Math.min(back.caret, doc.nodes[back.id]!.text.length))
   }
   const replaceOne = (): void => {
     if (find === null || cur === undefined) return
@@ -795,11 +821,13 @@ export function Outline(props: OutlineProps): ReactNode {
         {rows.map(r => {
           const node = doc.nodes[r.id]!
           return <Row key={r.id} node={node} depth={r.depth} editing={editing === r.id ? field : null} selected={selected.has(r.id)} tabStop={tabStopId === r.id}
-            marks={marksById.get(r.id) ?? NO_MARKS} tags={tags} drop={drop?.id === r.id ? drop.pos : null} dragging={dragId === r.id} ctl={ctl} />
+            marks={marksById.get(r.id) ?? NO_MARKS} tags={tags} filtered={tag !== null} drop={drop?.id === r.id ? drop.pos : null} dragging={dragId === r.id} ctl={ctl} />
         })}
         {rows.length === 0 && tag === null ? (
           <button type="button" className="mm-add" onClick={addFirst}><Icon name="plus" size={14} />添加节点</button>
-        ) : rows.length === 0 ? null : (
+        ) : rows.length === 0 ? (
+          <div className="mm-empty">没有带 #{tag} 标签的节点</div>
+        ) : tag !== null ? null : (
           <div style={{ height: 40, cursor: 'text' }} onMouseDown={e => {
             e.preventDefault()
             const kids = doc.nodes[rootId]?.children ?? []

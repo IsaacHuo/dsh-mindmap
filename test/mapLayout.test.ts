@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { OutlineDoc, OutlineNode } from '../src/shared/model.ts'
-import { ellipsize, layoutMap, mapToSvg, MAX_LINES, pngFits, wrap, type MapLayout, type Measure } from '../src/client/mapLayout.ts'
+import { docMapLayout, ellipsize, layoutMap, mapToSvg, MAX_LINES, MAX_TEXT_W, pngFits, wrap, type MapLayout, type Measure } from '../src/client/mapLayout.ts'
 
 const measure: Measure = (t, _b, size = 14) => t.length * 8 * size / 14
 
@@ -147,4 +147,18 @@ test('svg export: options and canvas limits', () => {
   assert.ok(pngFits(1000, 1000, 2))
   assert.equal(pngFits(9000, 100, 2), false)
   assert.equal(pngFits(8000, 8000, 2), false)
+})
+
+test('docMapLayout defaults to right; both only when saved', () => {
+  const d = makeDoc([{ text: 'a' }])
+  assert.equal(docMapLayout(d), 'right')
+  assert.equal(docMapLayout({ ...d, view: { mapLayout: 'both' } } as OutlineDoc), 'both')
+  assert.equal(docMapLayout({ ...d, view: { mapLayout: 'right' } } as OutlineDoc), 'right')
+})
+
+test('wrap never exceeds MAX_TEXT_W, also for a long token after a short word', () => {
+  const long = 'see ' + 'x'.repeat(80) + ' end'
+  const lines = wrap(long, measure, false)
+  for (const l of lines) assert.ok(measure(l, false) <= MAX_TEXT_W, 'line too wide: ' + l)
+  assert.equal(lines.join('').replace(/\s/g, ''), long.replace(/\s/g, ''))
 })

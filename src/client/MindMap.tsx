@@ -15,8 +15,8 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { OutlineDoc } from '../shared/model.ts'
 import * as ops from '../shared/ops.ts'
 import {
-  canvasMeasure, checkPos, docMapLayout, edgeFor, GAP_Y, layoutMap, STUB, textPos, tickPath, togglePos, TOGGLE_R,
-  type MapLayout, type MapLayoutMode, type MapNode, type Side,
+  canvasMeasure, CHECK_W, checkPos, docMapLayout, edgeFor, FONT_SIZE, GAP_Y, layoutMap, MAX_TEXT_W, PAD_X, PAD_Y, ROOT_FONT_SIZE, STUB, textPos, tickPath, togglePos, TOGGLE_R,
+  type MapLayout, type Measure, type MapLayoutMode, type MapNode, type Side,
 } from './mapLayout.ts'
 import type { DocumentState } from './useDocument.ts'
 import { Icon, type MenuState } from './ui.tsx'
@@ -95,6 +95,8 @@ export function MindMap(props: MindMapProps): ReactNode {
   const [cull, setCull] = useState<Rect | null>(null)
   const cullRef = useRef<Rect | null>(cull)
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
+  /** Live box of the in-place editor (map units); the node is drawn at this size while editing. */
+  const [editBox, setEditBox] = useState<EditBox | null>(null)
   const [panning, setPanning] = useState(false)
   const pan = useRef<{ px: number; py: number; vx: number; vy: number; moved: boolean } | null>(null)
   const nodeDrag = useRef<{ id: string; px: number; py: number; started: boolean } | null>(null)
@@ -110,6 +112,8 @@ export function MindMap(props: MindMapProps): ReactNode {
   useLayoutEffect(() => { if (box.current !== null) setFont(getComputedStyle(box.current).fontFamily || 'sans-serif') }, [])
   const measure = useMemo(() => canvasMeasure(font || 'sans-serif'), [font])
   const mode = docMapLayout(doc)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   const viewKey = doc.id + ':' + rootId
 
   // View-only collapse override, recomputed once per opened document / root.
@@ -174,7 +178,10 @@ export function MindMap(props: MindMapProps): ReactNode {
     const root = L.nodes[0]
     const { w, h } = sizeRef.current
     const k = clampK(Math.max(FIT_MIN_K, Math.min(1, (w - 80) / Math.max(L.width, 1))))
-    const x = L.width * k <= w - 80 || root === undefined ? (w - L.width * k) / 2 : w / 2 - (root.x + root.w / 2) * k
+    const x = L.width * k <= w - 80 || root === undefined ? (w - L.width * k) / 2
+      // 向右: everything grows rightwards, so start at the left edge rather than centring the root.
+      : modeRef.current === 'right' ? 40 - root.x * k
+      : w / 2 - (root.x + root.w / 2) * k
     const y = L.height * k <= h - 80 || root === undefined ? (h - L.height * k) / 2 : h / 2 - (root.y + root.h / 2) * k
     setViewNow({ k, x, y })
   }, [setViewNow])
@@ -218,8 +225,12 @@ export function MindMap(props: MindMapProps): ReactNode {
     if (root !== undefined) anchor.current = { key: viewKey, x: root.x, y: root.y }
   }, [layout, viewKey, rootId, font, fitWidth, setViewNow, applyView])
 
-  // Keep the selected node in view.
+  // Bring a newly selected node into view (not on every relayout: that would
+  // fight the user panning away while something stays selected).
+  const shownSel = useRef<string | null>(null)
   useLayoutEffect(() => {
+    if (selected === shownSel.current) return
+    shownSel.current = selected
     if (selected === null) return
     const n = layout.byId.get(selected)!
     const v = viewRef.current
@@ -243,10 +254,14 @@ export function MindMap(props: MindMapProps): ReactNode {
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault()
       const r = el.getBoundingClientRect()
-      if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * 0.0025), e.clientX - r.left, e.clientY - r.top)
+      // Firefox reports lines (1) or pages (2) for mouse wheels; normalise to pixels.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? sizeRef.current.h : 1
+      const dx = e.deltaX * unit
+      const dy = e.deltaY * unit
+      if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-dy * 0.0025), e.clientX - r.left, e.clientY - r.top)
       else {
         const v = viewRef.current
-        scheduleView({ ...v, x: v.x - (e.shiftKey ? e.deltaY : e.deltaX), y: v.y - (e.shiftKey ? 0 : e.deltaY) })
+        scheduleView({ ...v, x: v.x - (e.shiftKey ? dy : dx), y: v.y - (e.shiftKey ? 0 : dy) })
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -271,12 +286,14 @@ export function MindMap(props: MindMapProps): ReactNode {
     select(f.prevSel !== null && f.prevSel !== f.id ? f.prevSel : null)
   }
 
-  const commitEdit = (cur: { id: string; text: string } | null): void => {
+  /** `back` = return focus to the map (false when focus moved elsewhere on purpose). */
+  const commitEdit = (cur: { id: string; text: string } | null, back = true): void => {
     setEditing(null)
     if (cur === null) return
+    const focusMap = back ? refocus : () => {}
     const f = fresh.current
     if (f !== null && f.id === cur.id) {
-      if (cur.text.trim() === '') { dropFresh(); refocus(); return }
+      if (cur.text.trim() === '') { dropFresh(); focusMap(); return }
       fresh.current = null
     }
     if (cur.id === rootId && rootId === doc.rootId) {
@@ -284,7 +301,7 @@ export function MindMap(props: MindMapProps): ReactNode {
     } else if (doc.nodes[cur.id] !== undefined && doc.nodes[cur.id]!.text !== cur.text) {
       state.apply(ops.setText(doc, cur.id, cur.text))
     }
-    refocus()
+    focusMap()
   }
   const cancelEdit = (): void => {
     const cur = editing
@@ -309,6 +326,18 @@ export function MindMap(props: MindMapProps): ReactNode {
     fresh.current = { id: r.focusId, doc: r.doc, prevSel }
     select(r.focusId)
     setEditing({ id: r.focusId, text: '' })
+  }
+  /** Drop view-only collapse overrides of ids (a node just moved into them must be visible). */
+  const unhide = (ids: (string | undefined)[]): void => {
+    const hit = ids.filter((i): i is string => i !== undefined && override.has(i))
+    if (hit.length === 0) return
+    const s = new Set(override)
+    for (const i of hit) s.delete(i)
+    setOverride(s)
+  }
+  const parentIn = (d: OutlineDoc, id: string): string | undefined => {
+    for (const n of Object.values(d.nodes)) if (n.children.includes(id)) return n.id
+    return undefined
   }
   const addChildIn = (d: OutlineDoc, id: string): void => {
     const opened = expandIn(d, id)
@@ -346,8 +375,9 @@ export function MindMap(props: MindMapProps): ReactNode {
   }
   const moveSibling = (id: string, delta: -1 | 1): void => {
     if (id === rootId) return
-    const next = ops.moveSibling(doc, id, delta)
-    if (next !== doc) state.apply(next)
+    // Floor at the zoomed root: never move a node out of the zoomed subtree.
+    const next = ops.moveSibling(doc, id, delta, rootId)
+    if (next !== doc) { unhide([parentIn(next, id)]); state.apply(next) }
   }
   const toggleDone = (id: string): void => {
     if (id === doc.rootId || doc.nodes[id] === undefined) return
@@ -396,8 +426,13 @@ export function MindMap(props: MindMapProps): ReactNode {
 
   const onKey = (e: KeyboardEvent<HTMLDivElement>): void => {
     markSeen()
+    if (e.key === 'Escape' && nodeDrag.current !== null) { e.preventDefault(); nodeDrag.current = null; setDropBoth(null); return }
     if (editing !== null || e.target !== e.currentTarget) return
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      // An IME starts composing on a selected node: open the editor so the text lands there.
+      if (!e.nativeEvent.isComposing && selected !== null && selected !== rootId) startEdit(selected, '')
+      return
+    }
     const mod = e.ctrlKey || e.metaKey
     const k = e.key
     if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); if (e.shiftKey) state.redo(); else state.undo(); return }
@@ -493,6 +528,7 @@ export function MindMap(props: MindMapProps): ReactNode {
   }
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
     const nd = nodeDrag.current
+    if (nd !== null && e.buttons === 0) { nodeDrag.current = null; setDropBoth(null); return }
     if (nd !== null) {
       if (!nd.started) {
         if (Math.abs(e.clientX - nd.px) + Math.abs(e.clientY - nd.py) < DRAG_THRESHOLD) return
@@ -523,7 +559,7 @@ export function MindMap(props: MindMapProps): ReactNode {
       setDropBoth(null)
       if (nd.started && d !== null && d.ok && d.target !== null) {
         const next = ops.moveNode(doc, nd.id, d.target, d.pos)
-        if (next !== doc) { state.apply(next); select(nd.id) }
+        if (next !== doc) { unhide([d.pos === 'inside' ? d.target : undefined, parentIn(next, nd.id)]); state.apply(next); select(nd.id) }
       }
       return
     }
@@ -564,15 +600,16 @@ export function MindMap(props: MindMapProps): ReactNode {
       <svg {...svgHandlers}>
         <g ref={gRef} transform={tf(v)}>
           <NodeLayer layout={layout} cull={cull} editingId={editing?.id ?? null} />
-          {selNode !== undefined ? <SelectionRing n={selNode} /> : null}
+          {editNode !== undefined && editBox !== null && editBox.id === editNode.id ? <EditBackdrop n={editNode} box={editBox} />
+            : selNode !== undefined && editing === null ? <SelectionRing n={selNode} /> : null}
           {drop !== null ? <DropOverlay drop={drop} layout={layout} /> : null}
         </g>
       </svg>
       {editing !== null && editNode !== undefined ? (
-        <MapEditor key={editing.id} value={editing.text} elRef={editorRef} root={editNode.depth === 0}
-          nx={editNode.x} ny={editNode.y} view={v} width={Math.max(editNode.w, 160)}
+        <MapEditor key={editing.id} value={editing.text} elRef={editorRef} n={editNode} view={v} measure={measure}
+          onBox={setEditBox}
           onChange={text => setEditing({ id: editing.id, text })}
-          onCommit={() => commitEdit(editing)}
+          onCommit={back => commitEdit(editing, back)}
           onCancel={cancelEdit}
           onTab={() => {
             // Commit the text (own undo step), then add a child (own step).
@@ -589,8 +626,8 @@ export function MindMap(props: MindMapProps): ReactNode {
       {!hintSeen ? <div className="mm-map-hint mm-hide-narrow">双击编辑 · Tab 子节点 · Enter 同级 · 空格折叠 · 拖动节点改层级 · 拖动画布平移 · Ctrl+滚轮缩放</div> : null}
       <div className="mm-map-ctrl" onPointerDown={e => e.stopPropagation()}>
         <div className="mm-map-seg" role="group" aria-label="导图布局">
-          <button type="button" aria-pressed={mode === 'both'} title="分支分布在中心两侧" onClick={() => setMode('both')}>两侧</button>
           <button type="button" aria-pressed={mode === 'right'} title="分支全部向右展开" onClick={() => setMode('right')}>向右</button>
+          <button type="button" aria-pressed={mode === 'both'} title="分支分布在中心两侧" onClick={() => setMode('both')}>两侧</button>
         </div>
         <button type="button" className="mm-icon-btn" title="缩小" aria-label="缩小" onClick={() => zoomAt(1 / 1.2)}><Icon name="minus" /></button>
         <button ref={zoomRef} type="button" className="mm-map-zoom" title="恢复 100%" aria-label="缩放比例，点击恢复 100%" onClick={() => centerOn(selected ?? rootId, 1)}>{Math.round(v.k * 100) + '%'}</button>
@@ -693,13 +730,49 @@ function DropOverlay(props: { drop: DropView; layout: MapLayout }): ReactNode {
   )
 }
 
+/** Box of the in-place editor, in map units. */
+interface EditBox { id: string; x: number; w: number; h: number }
+
+/** The node drawn at the editor's live size, with the selection ring around it. */
+function EditBackdrop(props: { n: MapNode; box: EditBox }): ReactNode {
+  const { n, box } = props
+  const m: MapNode = { ...n, x: box.x, w: box.w, h: box.h }
+  const k = m.check !== null ? checkPos(m) : null
+  return (
+    <g className={nodeClass(m) + ' mm-map-editing'} data-map-node={n.id}>
+      {m.depth === 1 ? <rect className="mm-under" x={m.x} y={m.y} width={m.w} height={m.h} rx={6} /> : null}
+      <rect className="mm-box" x={m.x} y={m.y} width={m.w} height={m.h} rx={6} />
+      {k !== null ? (m.check === true
+        ? <><rect className="mm-map-check-on" x={k.x} y={k.y} width={12} height={12} rx={3} /><path className="mm-map-tick" d={tickPath(k.x, k.y)} /></>
+        : <rect className="mm-map-check-off" x={k.x + 0.5} y={k.y + 0.5} width={11} height={11} rx={3} />) : null}
+      <rect className="mm-map-selring" x={m.x - 3} y={m.y - 3} width={m.w + 6} height={m.h + 6} rx={8} />
+    </g>
+  )
+}
+
+/**
+ * In-place editor: a borderless, transparent textarea laid exactly over the
+ * node's text, so typing happens inside the node's own box (drawn by
+ * EditBackdrop, which grows with the text). No second frame.
+ */
 function MapEditor(props: {
-  value: string; nx: number; ny: number; view: View; width: number; root: boolean
+  value: string; n: MapNode; view: View; measure: Measure
   elRef: { current: HTMLTextAreaElement | null }
-  onChange(text: string): void; onCommit(): void; onCancel(): void; onTab(): void
+  onBox(box: EditBox): void
+  onChange(text: string): void; onCommit(back: boolean): void; onCancel(): void; onTab(): void
 }): ReactNode {
+  const { n } = props
   const ref = props.elRef
   const done = useRef(false)
+  const root = n.depth === 0
+  const size = root ? ROOT_FONT_SIZE : FONT_SIZE
+  const indent = n.check !== null ? CHECK_W : 0
+  // Width: the node's own width, grown to fit the longest typed line (capped like layout).
+  let textW = 0
+  for (const line of props.value.split('\n')) textW = Math.max(textW, props.measure(line, root, size))
+  const w = Math.max(n.w, Math.ceil(Math.min(textW, MAX_TEXT_W)) + PAD_X * 2 + indent + 2)
+  // Left-side branches grow leftwards, away from their parent.
+  const x = n.depth > 0 && n.side < 0 ? n.x + n.w - w : n.x
   useLayoutEffect(() => {
     const el = ref.current
     if (el === null) return
@@ -708,23 +781,39 @@ function MapEditor(props: {
     if (end > 1) el.select(); else el.setSelectionRange(end, end)
     return () => { ref.current = null }
   }, [ref])
+  const { onBox } = props
   useLayoutEffect(() => {
     const el = ref.current
-    if (el !== null) { el.style.height = '0px'; el.style.height = el.scrollHeight + 'px' }
-  })
+    if (el === null) return
+    el.style.height = '0px'
+    const h = Math.max(n.h, el.scrollHeight)
+    el.style.height = h + 'px'
+    onBox({ id: n.id, x, w, h })
+  }, [props.value, n.id, n.h, x, w, ref, onBox])
   const finish = (fn: () => void): void => { if (done.current) return; done.current = true; fn() }
   const v = props.view
   return (
-    <textarea ref={el => { ref.current = el }} className={'mm-map-edit' + (props.root ? ' mm-root-edit' : '')} rows={1} value={props.value} spellCheck={false} aria-label="编辑节点"
-      data-nx={props.nx} data-ny={props.ny}
-      style={{ left: v.x + props.nx * v.k, top: v.y + props.ny * v.k, width: props.width, transform: 'scale(' + v.k + ')' }}
+    <textarea ref={el => { ref.current = el }} className={'mm-map-edit' + (root ? ' mm-root-edit' : '')} rows={1} value={props.value} spellCheck={false} aria-label="编辑节点"
+      data-nx={x} data-ny={n.y}
+      style={{
+        left: v.x + x * v.k, top: v.y + n.y * v.k, width: w, transform: 'scale(' + v.k + ')',
+        padding: PAD_Y + 'px ' + PAD_X + 'px ' + PAD_Y + 'px ' + (PAD_X + indent) + 'px',
+        lineHeight: n.lh + 'px', fontSize: size + 'px',
+      }}
       onPointerDown={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
       onChange={e => props.onChange(e.target.value)}
-      onBlur={() => finish(props.onCommit)}
+      onBlur={e => {
+        // Window lost focus (alt-tab, devtools): keep editing; focus comes back here.
+        if (!document.hasFocus()) return
+        // Focus moved somewhere else on purpose: commit, but do not pull focus back.
+        const to = e.relatedTarget as Node | null
+        const back = to === null || (e.currentTarget.parentElement?.contains(to) ?? false)
+        finish(() => props.onCommit(back))
+      }}
       onKeyDown={e => {
         e.stopPropagation()
         if (e.nativeEvent.isComposing || e.keyCode === 229) return
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(props.onCommit) }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(() => props.onCommit(true)) }
         else if (e.key === 'Escape') { e.preventDefault(); finish(props.onCancel) }
         else if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); finish(props.onTab) }
       }} />

@@ -41,7 +41,11 @@ export const MAP_CSS = [
   '.mm-map-ghost rect{fill:var(--mm-elev);stroke:var(--mm-accent);stroke-width:1.5}',
   '.mm-map-ghost text{fill:var(--mm-text);font-size:14px;dominant-baseline:central}',
   '.mm-map.mm-dragging,.mm-map.mm-dragging *{cursor:grabbing}',
-  '.mm-map-edit.mm-root-edit{font-size:17px;line-height:24px;font-weight:600}',
+  // In-place editor: transparent and frameless, laid over the node's own box (EditBackdrop).
+  '.mm-map-edit{position:absolute;z-index:5;box-sizing:border-box;margin:0;border:0;border-radius:6px;background:transparent;color:var(--mm-text);font:inherit;font-size:14px;line-height:20px;resize:none;outline:0;box-shadow:none;overflow:hidden;transform-origin:0 0;white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.mm-map-edit.mm-root-edit{font-size:17px;line-height:24px;font-weight:600;color:#fff;caret-color:#fff}',
+  '.mm-map-edit.mm-root-edit::selection{background:rgba(255,255,255,.35)}',
+  '@media (max-width:950px){.mm-map-hint{display:none}}',
   '.mm-map-hint{background:var(--mm-elev);border:1px solid var(--mm-border);border-radius:6px;padding:4px 10px;box-shadow:0 2px 8px rgba(0,0,0,.06)}',
   '.mm-map-zoom{font-size:12px;color:var(--mm-sub);min-width:44px;height:26px;text-align:center;background:none;border:0;border-radius:6px;cursor:pointer;font-variant-numeric:tabular-nums}',
   '.mm-map-zoom:hover{background:var(--mm-hover);color:var(--mm-text)}',

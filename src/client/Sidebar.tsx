@@ -157,10 +157,15 @@ export function Sidebar(props: SidebarProps): ReactNode {
     if (folderId !== null) setOpenFolders(s => new Set(s).add(folderId))
   }
 
-  const docMenu = (m: DocMeta, x: number, y: number): void => {
+  /** `rk` = row key (prefix + id): a favourite doc is listed twice, only the clicked row renames. */
+  /** After Enter / Esc in the rename box, keyboard focus returns to the row. */
+  const refocusRow = (rk: string): void => {
+    requestAnimationFrame(() => { (document.querySelector('[data-rk="' + CSS.escape(rk) + '"]') as HTMLElement | null)?.focus() })
+  }
+  const docMenu = (m: DocMeta, x: number, y: number, rk: string): void => {
     const items: MenuEntry[] = [
       { label: '打开', onSelect: () => props.onOpen(m.id) },
-      { label: '重命名', shortcut: 'F2', onSelect: () => setRenaming(m.id) },
+      { label: '重命名', shortcut: 'F2', onSelect: () => setRenaming(rk) },
       { label: m.favorite ? '取消收藏' : '收藏', onSelect: () => void props.onPatch(m.id, { favorite: !m.favorite }) },
       { kind: 'sep' },
       { kind: 'label', label: '移动到' },
@@ -243,33 +248,36 @@ export function Sidebar(props: SidebarProps): ReactNode {
     return false
   }
 
-  const docRow = (m: DocMeta, depth: number, keyPrefix: string, favIndex = -1): ReactNode => (
-    <div key={keyPrefix + m.id} className={'mm-row' + (m.id === props.activeId ? ' mm-active' : '')} role="button" tabIndex={0} draggable={renaming !== m.id}
+  const docRow = (m: DocMeta, depth: number, keyPrefix: string, favIndex = -1): ReactNode => {
+    const rk = keyPrefix + m.id
+    return (
+    <div key={rk} data-rk={rk} className={'mm-row' + (m.id === props.activeId ? ' mm-active' : '')} role="button" tabIndex={0} draggable={renaming !== rk}
       style={{ paddingLeft: 8 + depth * 14 }}
       aria-current={m.id === props.activeId ? 'page' : undefined}
       title={favIndex >= 0 && favIndex < 9 ? m.title + '（Alt+' + (favIndex + 1) + '）' : undefined}
-      onClick={() => { if (renaming !== m.id) props.onOpen(m.id) }}
+      onClick={() => { if (renaming !== rk) props.onOpen(m.id) }}
       onKeyDown={e => {
-        if (renaming === m.id || rowKeys(e, (x, y) => docMenu(m, x, y))) return
+        if (renaming === rk || rowKeys(e, (x, y) => docMenu(m, x, y, rk))) return
         if (e.key === 'Enter') props.onOpen(m.id)
-        else if (e.key === 'F2') { e.preventDefault(); setRenaming(m.id) }
+        else if (e.key === 'F2') { e.preventDefault(); setRenaming(rk) }
         else if (e.key === 'Delete') { e.preventDefault(); void props.onTrash(m.id) }
       }}
-      onDoubleClick={() => setRenaming(m.id)}
+      onDoubleClick={() => setRenaming(rk)}
       onDragStart={e => startDrag(e, { kind: 'doc', id: m.id }, m.title)} onDragEnd={endDrag}
-      onContextMenu={e => { e.preventDefault(); docMenu(m, e.clientX, e.clientY) }}>
-      {renaming === m.id ? (
-        <RenameInput value={m.title} onDone={title => { setRenaming(null); if (title !== null && title.trim().length > 0 && title.trim() !== m.title) void props.onPatch(m.id, { title: title.trim() }) }} />
+      onContextMenu={e => { e.preventDefault(); docMenu(m, e.clientX, e.clientY, rk) }}>
+      {renaming === rk ? (
+        <RenameInput value={m.title} onDone={(title, byKey) => { setRenaming(null); if (byKey) refocusRow(rk); if (title !== null && title.trim().length > 0 && title.trim() !== m.title) void props.onPatch(m.id, { title: title.trim() }) }} />
       ) : (
         <>
           {m.favorite && keyPrefix !== 'fav-' ? <span className="mm-row-star" aria-label="已收藏"><Icon name="star" size={11} /></span> : null}
           <span className="mm-row-title">{m.title}</span>
           <span className="mm-row-time" title={new Date(sort === 'created' ? m.createdAt : m.updatedAt).toLocaleString()}>{relTime(sort === 'created' ? m.createdAt : m.updatedAt)}</span>
-          {moreButton((x, y) => docMenu(m, x, y))}
+          {moreButton((x, y) => docMenu(m, x, y, rk))}
         </>
       )}
     </div>
   )
+  }
 
   const folderNode = (f: Folder, depth: number, seen: Set<string>): ReactNode => {
     if (seen.has(f.id)) return null
@@ -345,7 +353,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
       </div>
       <label className="mm-search">
         <Icon name="search" size={14} />
-        <input type="search" placeholder="搜索文档和内容" aria-label="搜索文档和内容" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setQuery('') }} />
+        <input type="search" placeholder="搜索文档和内容" aria-label="搜索文档和内容" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape' && !e.nativeEvent.isComposing && e.keyCode !== 229) setQuery('') }} />
       </label>
       <div className="mm-side-scroll">
         {props.error !== null ? <div className="mm-empty">无法读取文档列表：{props.error} <button type="button" className="mm-btn" onClick={() => void props.onRefresh()}>重试</button></div> : null}
@@ -446,18 +454,18 @@ function TrashPreview(props: { meta: DocMeta; onRestore(): void; onPurge(): void
   )
 }
 
-function RenameInput(props: { value: string; onDone(value: string | null): void }): ReactNode {
+function RenameInput(props: { value: string; onDone(value: string | null, byKey: boolean): void }): ReactNode {
   const [v, setV] = useState(props.value)
   const done = useRef(false)
-  const finish = (value: string | null): void => { if (!done.current) { done.current = true; props.onDone(value) } }
+  const finish = (value: string | null, byKey = false): void => { if (!done.current) { done.current = true; props.onDone(value, byKey) } }
   return (
     <input autoFocus value={v} aria-label="文档名称" onFocus={e => e.currentTarget.select()} onClick={e => e.stopPropagation()} onChange={e => setV(e.target.value)}
       onBlur={() => finish(v)}
       onKeyDown={e => {
         e.stopPropagation()
         if (e.nativeEvent.isComposing || e.keyCode === 229) return
-        if (e.key === 'Enter') finish(v)
-        else if (e.key === 'Escape') finish(null)
+        if (e.key === 'Enter') finish(v, true)
+        else if (e.key === 'Escape') finish(null, true)
       }} />
   )
 }
