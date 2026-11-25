@@ -47,3 +47,46 @@ export function onBroadcast(fn: (m: SyncMessage) => void): () => void {
   listeners.add(fn)
   return () => { listeners.delete(fn) }
 }
+
+/** A change pushed by the host (`/events`), including the AI tool's edits. */
+export type ServerChange = { kind: 'doc'; docId: string; revision: number; source: 'user' | 'ai' } | { kind: 'library' }
+
+let source: EventSource | null = null
+const serverListeners = new Set<(c: ServerChange) => void>()
+
+function isChange(v: unknown): v is ServerChange {
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  if (m.kind === 'library') return true
+  return m.kind === 'doc' && typeof m.docId === 'string' && typeof m.revision === 'number'
+}
+
+/**
+ * Listen to the host's change stream; one EventSource is shared by all
+ * listeners and closed when the last one leaves. The browser reconnects by
+ * itself; `onReconnect` listeners see a synthetic library change so they can
+ * refetch what they may have missed.
+ */
+export function onServerChange(url: string, fn: (c: ServerChange) => void): () => void {
+  serverListeners.add(fn)
+  if (source === null && typeof EventSource !== 'undefined') {
+    let opened = false
+    source = new EventSource(url)
+    source.addEventListener('change', (e: MessageEvent) => {
+      let data: unknown
+      try { data = JSON.parse(String(e.data)) } catch { return }
+      if (!isChange(data)) return
+      for (const l of serverListeners) {
+        try { l(data) } catch (error) { console.warn('[dsh-mindmap] change listener failed:', error) }
+      }
+    })
+    source.addEventListener('open', () => {
+      if (opened) for (const l of serverListeners) { try { l({ kind: 'library' }) } catch { /* ignore */ } }
+      opened = true
+    })
+  }
+  return () => {
+    serverListeners.delete(fn)
+    if (serverListeners.size === 0 && source !== null) { source.close(); source = null }
+  }
+}

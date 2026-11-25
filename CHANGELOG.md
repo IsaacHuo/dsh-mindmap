@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0
+
+AI and sessions
+- Agent tool `mindmap` (list / read / search / apply) plus a short system-prompt guide. AI edits leave traces: added (green), edited (amber, original on hover), deleted (marked with strikethrough, subtree kept, never removed).
+- Review: accept / reject per node or subtree from the node menu; pending badge in the toolbar lists changes with 全部接受 / 全部拒绝; all undoable.
+- 以此节点新建会话: new session in the current workspace with a pre-filled prompt (path, subtree up to 8k chars, `mindmap://` reference, trace rules); the session is bound to the node (💬N badge to open / unbind).
+- 插入到对话, 复制 AI 引用, 复制文档文件路径.
+- Right-sidebar 思维导图 tab (compact view with document picker), opened from the session header.
+
+Sync
+- Server change stream (SSE); open documents refresh live and unsaved local edits are three-way merged with external changes instead of raising a conflict.
+
+Fixes
+- Outline: Ctrl+A a second time (text already fully selected) selects all rows.
+
+Tests
+- Unit: AI ops, three-way merge, host tool / SSE / info routes, client AI helpers.
+- e2e: harness supplies tools / systemPrompt fakes; waits tolerate the SSE stream.
+
 ## 0.2.2
 
 Fixes

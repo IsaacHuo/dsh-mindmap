@@ -17,6 +17,7 @@
 - **文档管理**：新建、重命名、删除到回收站并可恢复、多级文件夹与拖放、收藏（Alt+1…9）、排序、最近编辑时间、搜索标题 / 节点 / 备注；回收站 30 天后自动清空。
 - **导入导出**：导入 Markdown、OPML；导出 Markdown、OPML、PNG、SVG（整篇或聚焦的子树）。
 - **存储**：停止输入 800 ms 后自动保存，切换文档 / 离开页面时立即保存；原子写入；修订号冲突检测；每日自动备份（保留 14 份），可手动备份、下载、原子恢复；其他标签页的修改会自动同步。
+- **AI 与会话**：注册 Agent 工具 `mindmap`（list / read / search / apply），模型可读取并修改文档，且全部留痕：新增节点绿条，修改节点黄条（悬停看原文），删除只做标记（红色删除线，子树保留）。可按节点、子树或在待审徽标里一次性接受 / 拒绝，均可撤销。节点菜单「以此节点新建会话」会新建会话并预填节点路径、子树内容和 `mindmap://文档/节点` 引用，同时把会话绑定到节点（💬N 徽标）；「插入到对话」把节点引用到输入框；「复制 AI 引用 / 复制文档文件路径」。右侧栏「思维导图」标签页（会话标题栏按钮打开）让导图和对话并排显示。AI 与其他标签页的修改实时三方合并，不再弹冲突。
 
 ## 环境要求
 
@@ -36,7 +37,7 @@ dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 从 GitHub 安装（固定到 tag；仓库提交了 `lib/`，安装时不需要构建）：
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.3.0
 ```
 
 重启 DSH，侧边栏出现「思维导图」。
@@ -45,7 +46,7 @@ dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1
 
 ```sh
 dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1   # GitHub
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.3.0   # GitHub
 ```
 
 npm 安装的版本也可以在 DSH 插件管理里更新。更新后重启 DSH。
@@ -63,7 +64,8 @@ dsh plugin --profile desktop remove @huoweifang/dsh-mindmap
 - 数据目录：`~/.dsh/dsh-mindmap/`（或 `$DSH_HOME/dsh-mindmap`，可用 `DSH_MINDMAP_DIR` 覆盖），包含 `library.json`、`docs/<id>.json`、`backups/`。
 - 文档是未加密的 JSON 文件，能访问你系统账号的人都能读到，请勿存放机密。
 - 插件只在 DSH Web 服务上注册 `/dsh-mindmap/api` 路由，沿用 DSH 自身的访问控制；写请求必须是 `application/json`（挡住简单的跨站表单提交），请求须来自回环地址且 `Origin` 同源，请求体按路由限制（保存 32 MB、恢复 64 MB、其他 1 MB），文档 id 在访问文件系统前校验。
-- 不发起网络请求、无遥测、不注册 Agent 工具、不调用模型。笔记中的链接只允许 `http(s)`，笔记内容从不作为 HTML 渲染。
+- 注册一个 Agent 工具 `mindmap`，DSH 会话里的模型可调用；只读写数据目录内的文档，从不真正删除节点（删除是标记，需用户接受）。变更通知走同源 SSE `/dsh-mindmap/api/events`。
+- 插件自身不发起外部网络请求、无遥测、不调用模型。笔记中的链接只允许 `http(s)`，笔记内容从不作为 HTML 渲染。
 
 ## 开发
 

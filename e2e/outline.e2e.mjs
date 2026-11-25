@@ -38,7 +38,13 @@ const page = await browser.newPage()
 await page.setViewport({ width: 1280, height: 800 })
 const errors = []
 page.on('pageerror', e => errors.push(e.message))
-page.on('console', m => { if (m.type() === 'error' && !/404/.test(m.text())) errors.push(m.text()) })
+page.on('console', m => {
+  if (m.type() !== 'error' || /404/.test(m.text())) return
+  const url = m.location()?.url ?? ''
+  // The change stream (SSE) is cut when the page reloads; the browser reconnects.
+  if (url.endsWith('/events') && /ERR_CONNECTION_RESET|ERR_ABORTED/.test(m.text())) return
+  errors.push(m.text() + (url ? ' @ ' + url : ''))
+})
 const cdp = await page.createCDPSession()
 await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir })
 
@@ -63,7 +69,7 @@ const key = async (k, mod) => { if (mod) await page.keyboard.down(mod); await pa
 const type = async t => { await page.keyboard.type(t); await sleep(60) }
 
 try {
-  await page.goto(harness.url, { waitUntil: 'networkidle0' })
+  await page.goto(harness.url, { waitUntil: 'networkidle2' })
   await step('page registers main slot and sidebar entry 思维导图', async () => {
     const h = await page.evaluate(() => window.__harness)
     assert.deepEqual(h, { main: ['dsh-mindmap'], side: ['思维导图'] })
@@ -196,7 +202,7 @@ try {
     const before = await docTree()
     await stopHarness(harness)
     harness = await startHarness()
-    await page.goto(harness.url, { waitUntil: 'networkidle0' })
+    await page.goto(harness.url, { waitUntil: 'networkidle2' })
     await page.waitForSelector('[data-node-id]')
     const after = await docTree()
     assert.deepEqual(after.tree, before.tree)
@@ -206,7 +212,7 @@ try {
 
   await step('dark theme screenshots', async () => {
     await page.screenshot({ path: join(tmp, 'e2e-outline.png') })
-    await page.goto(harness.url + '?dark', { waitUntil: 'networkidle0' })
+    await page.goto(harness.url + '?dark', { waitUntil: 'networkidle2' })
     await page.waitForSelector('[data-node-id]')
     await page.screenshot({ path: join(tmp, 'e2e-outline-dark.png') })
     await clickText('[role=tab]', '导图')

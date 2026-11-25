@@ -26,6 +26,12 @@ export const TRASH_RETENTION_MS = 30 * 24 * 3600 * 1000
 /** Whole documents kept in memory (least recently used evicted). */
 export const DOC_CACHE_LIMIT = 50
 
+/** Who caused a document change. */
+export type ChangeSource = 'user' | 'ai'
+
+/** A saved change, pushed to listeners (the /events stream). */
+export type ChangeEvent = { kind: 'doc'; docId: string; revision: number; source: ChangeSource } | { kind: 'library' }
+
 /** Purge backups closer together than this are coalesced into one. */
 const PURGE_BACKUP_DEDUPE_MS = 60 * 1000
 
@@ -173,6 +179,8 @@ export class MindmapStorage {
   private loading: Promise<void> | undefined
   private pendingWarnings: string[] = []
   private lastPurgeBackup: { at: number; info: BackupInfo } | null = null
+  private readonly listeners = new Set<(event: ChangeEvent) => void>()
+  private source: ChangeSource = 'user'
 
   constructor(dir: string, now: () => number = () => Date.now()) {
     this.dir = dir
@@ -307,6 +315,60 @@ export class MindmapStorage {
 
   private async writeLibrary(): Promise<void> {
     await atomicWrite(this.libraryFile, JSON.stringify(this.library, null, 1))
+    this.emit({ kind: 'library' })
+  }
+
+  /** Subscribe to saved changes (documents and the library); returns an unsubscriber. */
+  onChange(fn: (event: ChangeEvent) => void): () => void {
+    this.listeners.add(fn)
+    return () => { this.listeners.delete(fn) }
+  }
+
+  private emit(event: ChangeEvent): void {
+    for (const fn of this.listeners) {
+      try { fn(event) } catch (error) { console.warn('[dsh-mindmap] change listener failed:', error) }
+    }
+  }
+
+  /** Absolute path of a document's JSON file (read-only use: edits must go through this service). */
+  docPath(id: string): string {
+    if (!ID_RE.test(id)) throw new StorageError('invalid_input', '无效的文档 id')
+    return this.docFile(id)
+  }
+
+  /** Absolute documents directory. */
+  get documentsDir(): string { return this.docsDir }
+
+  /**
+   * Read-modify-write one document inside the serial queue (used by the agent
+   * tool). `fn` returns the next document (or the same object for a no-op)
+   * plus a result; the revision is bumped and a change event is emitted.
+   * Trashed documents are refused.
+   */
+  mutateDoc<T>(id: string, fn: (doc: OutlineDoc) => { doc: OutlineDoc; result: T }, source: ChangeSource = 'ai'): Promise<{ doc: OutlineDoc; result: T; changed: boolean }> {
+    return this.serial(async () => {
+      const meta = this.meta(id)
+      if (meta.trashedAt !== undefined) throw new StorageError('invalid_input', '文档在回收站中，不能修改')
+      const current = await this.loadDoc(id)
+      const out = fn(structuredClone(current))
+      if (out.doc === current || JSON.stringify(out.doc.nodes) === JSON.stringify(current.nodes) && out.doc.title === current.title) {
+        return { doc: current, result: out.result, changed: false }
+      }
+      if (out.doc.id !== id) throw new StorageError('invalid_input', '文档 id 不匹配')
+      await this.dailyBackup()
+      const now = this.now()
+      const next: OutlineDoc = { ...out.doc, title: normalizeTitle(out.doc.title), revision: current.revision + 1, createdAt: current.createdAt, updatedAt: now }
+      this.source = source
+      try {
+        await this.writeDoc(next)
+      } finally {
+        this.source = 'user'
+      }
+      meta.title = next.title
+      meta.updatedAt = now
+      await this.writeLibrary()
+      return { doc: next, result: out.result, changed: true }
+    })
   }
 
   private remember(doc: OutlineDoc): void {
@@ -321,6 +383,7 @@ export class MindmapStorage {
     if (problem !== null) throw new StorageError('invalid_input', `文档结构无效：${problem}`)
     await atomicWrite(this.docFile(doc.id), JSON.stringify(doc))
     this.remember(doc)
+    this.emit({ kind: 'doc', docId: doc.id, revision: doc.revision, source: this.source })
   }
 
   private meta(id: string): DocMeta {

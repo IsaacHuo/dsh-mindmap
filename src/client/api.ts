@@ -59,5 +59,6 @@ export const api = {
   backupNow: () => call<BackupInfo>('/backups/now', {}),
   restoreBackup: (name: string) => call<{ docs: number; preRestore: string }>(`/backups/${name}/restore`, {}),
   restoreFile: (data: unknown) => call<{ docs: number; preRestore: string }>('/restore', data),
+  info: () => call<{ dataDir: string; docsDir: string }>('/info'),
   backupUrl: (name: string) => `${ROUTE_PREFIX}/backups/${encodeURIComponent(name)}`,
 }

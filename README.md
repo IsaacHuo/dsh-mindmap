@@ -17,6 +17,7 @@ An **outliner and mind-map plugin** for [DeepSeek Harness](https://github.com/de
 - **Documents** — create, rename, trash and restore, nested folders with drag and drop, favorites (Alt+1…9), sorting, last-edited time, search across titles, node text and notes; trash is emptied automatically after 30 days.
 - **Import / export** — import Markdown and OPML; export Markdown, OPML, PNG and SVG (whole document or the focused subtree).
 - **Storage** — autosave 800 ms after typing stops and immediately on document switch / page hide; atomic writes; revision-based conflict detection; daily automatic backups (14 kept), manual backup, download and atomic restore; edits in another tab are picked up automatically.
+- **AI and sessions** — an agent tool `mindmap` (list / read / search / apply) lets the model read documents and edit them with visible traces: added nodes get a green bar, edited nodes an amber bar with the original on hover, deletions are only marked (red strikethrough, subtree kept). Review per node, per subtree or all at once from the pending badge; every review is undoable. Node menu → 以此节点新建会话 opens a new session pre-filled with the node path, subtree and a `mindmap://doc/node` reference, and binds it to the node (💬N badge). 插入到对话 quotes a node into the composer; 复制 AI 引用 / 复制文档文件路径 copy a reference or the JSON path. A **思维导图** tab in the right sidebar (session header button) shows the map next to the conversation. Edits from the AI and from other tabs are merged live (three-way) instead of raising a conflict.
 
 ## Requirements
 
@@ -36,7 +37,7 @@ dsh plugin --profile desktop add @huoweifang/dsh-mindmap
 From GitHub (pin a tag; `lib/` is committed, so no build step runs on install):
 
 ```sh
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.3.0
 ```
 
 Restart DSH. A **思维导图** entry appears in the sidebar.
@@ -45,7 +46,7 @@ Restart DSH. A **思维导图** entry appears in the sidebar.
 
 ```sh
 dsh plugin --profile desktop add @huoweifang/dsh-mindmap@latest          # npm
-dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.2.1   # GitHub
+dsh plugin --profile desktop add github:IsaacHuo/dsh-mindmap#v0.3.0   # GitHub
 ```
 
 npm installs can also be updated from the DSH plugin manager. Restart DSH afterwards.
@@ -63,7 +64,8 @@ Uninstalling keeps your documents. Delete the data directory below by hand if yo
 - Data directory: `~/.dsh/dsh-mindmap/` (or `$DSH_HOME/dsh-mindmap`; override with `DSH_MINDMAP_DIR`). It holds `library.json`, `docs/<id>.json` and `backups/`.
 - Documents are plain, unencrypted JSON. Anyone with access to your user account can read them; don't store secrets.
 - The plugin only registers HTTP routes under `/dsh-mindmap/api` on the DSH web server and inherits its access control. Write requests must be `application/json` (blocks simple cross-site form posts); requests must come from a loopback host with a same-origin `Origin`; bodies are capped per route (save 32 MB, restore 64 MB, others 1 MB); document ids are validated before touching the file system.
-- No network requests, telemetry, agent tools or model calls. Links in notes open only for `http(s)` URLs, and notes are never rendered as HTML.
+- The plugin registers one agent tool, `mindmap`, available to models in DSH sessions. It reads and edits documents in the data directory only; it never removes nodes (deletions are marks the user must accept). Change notifications use a same-origin SSE stream at `/dsh-mindmap/api/events`.
+- No outbound network requests, telemetry or model calls of its own. Links in notes open only for `http(s)` URLs, and notes are never rendered as HTML.
 
 ## Development
 

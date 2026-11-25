@@ -15,6 +15,66 @@ export interface OutlineNode {
   checked?: boolean | null
   /** Optional multi-line note shown under the text (Mubu-style description). */
   note?: string
+  /** A pending AI change awaiting the user's review (never set by user edits). */
+  ai?: AiMark
+  /** Conversations bound to this node ("以此节点新建会话"). */
+  sessions?: SessionLink[]
+}
+
+/** Kind of a pending AI change. */
+export type AiKind = 'added' | 'edited' | 'deleted'
+
+/**
+ * A pending AI change. `deleted` nodes stay in the tree (shown struck
+ * through) until the user accepts; `edited` keeps the text/note from before
+ * the first AI edit so a reject can restore it.
+ */
+export interface AiMark {
+  kind: AiKind
+  at: number
+  sessionId?: string
+  prevText?: string
+  prevNote?: string
+  prevChecked?: boolean | null
+}
+
+/** One conversation bound to a node. */
+export interface SessionLink {
+  id: string
+  title?: string
+  createdAt: number
+}
+
+/** Max sessions bound to one node. */
+export const MAX_NODE_SESSIONS = 20
+
+const AI_KINDS = new Set<string>(['added', 'edited', 'deleted'])
+
+/** Shape check for `node.ai`; returns an error message or null. */
+function checkAi(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'not an object'
+  const m = value as Record<string, unknown>
+  if (typeof m.kind !== 'string' || !AI_KINDS.has(m.kind)) return 'invalid kind'
+  if (typeof m.at !== 'number' || !Number.isFinite(m.at)) return 'invalid time'
+  if (m.sessionId !== undefined && typeof m.sessionId !== 'string') return 'invalid session'
+  if (m.prevText !== undefined && typeof m.prevText !== 'string') return 'invalid prevText'
+  if (m.prevNote !== undefined && typeof m.prevNote !== 'string') return 'invalid prevNote'
+  if (m.prevChecked !== undefined && m.prevChecked !== null && typeof m.prevChecked !== 'boolean') return 'invalid prevChecked'
+  return null
+}
+
+/** Shape check for `node.sessions`; returns an error message or null. */
+function checkSessions(value: unknown): string | null {
+  if (!Array.isArray(value)) return 'not an array'
+  if (value.length > MAX_NODE_SESSIONS) return 'too many'
+  for (const s of value) {
+    if (typeof s !== 'object' || s === null) return 'entry is not an object'
+    const e = s as Record<string, unknown>
+    if (typeof e.id !== 'string' || e.id.length === 0 || e.id.length > 200) return 'invalid id'
+    if (e.title !== undefined && typeof e.title !== 'string') return 'invalid title'
+    if (typeof e.createdAt !== 'number') return 'invalid time'
+  }
+  return null
 }
 
 /** Per-document view preferences (stored with the document). */
@@ -183,6 +243,8 @@ export function validateDoc(value: unknown): string | null {
     if (node.id !== id) return `node key mismatch ${id}`
     if (typeof node.text !== 'string') return `node ${id} has no text`
     if (node.note !== undefined && typeof node.note !== 'string') return `node ${id} has an invalid note`
+    if (node.ai !== undefined) { const p = checkAi(node.ai); if (p !== null) return `node ${id} has an invalid ai mark (${p})` }
+    if (node.sessions !== undefined) { const p = checkSessions(node.sessions); if (p !== null) return `node ${id} has invalid sessions (${p})` }
     if (!Array.isArray(node.children)) return `node ${id} has no children array`
     for (const child of node.children) {
       if (typeof child !== 'string') return `node ${id} has a non-string child`

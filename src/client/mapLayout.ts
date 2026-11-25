@@ -10,6 +10,7 @@
  */
 import type { OutlineDoc } from '../shared/model.ts'
 import { plainText } from './plain.ts'
+import { aiTip } from './ai.ts'
 
 export const LINE_H = 20
 export const ROOT_LINE_H = 24
@@ -52,6 +53,10 @@ export interface MapNode {
   collapsed: boolean
   hidden: number
   done: boolean
+  /** Pending AI change on this node; 'gone' = inside a subtree the AI marked for deletion. */
+  ai: 'added' | 'edited' | 'deleted' | 'gone' | null
+  /** Tooltip describing the pending AI change (original text for edits). */
+  aiTip: string | null
   /** Checklist state: null = plain node. */
   check: boolean | null
   /** -1 = left of the root, 1 = right (the root itself is 1). */
@@ -179,10 +184,12 @@ export function layoutMap(doc: OutlineDoc, rootId: string, rootLabel: string, me
     const h = lines.length * lh + PAD_Y * 2
     const collapsed = !isRoot && n.children.length > 0 && (n.collapsed === true || (override !== null && override.has(it.id)))
     const idx = nodes.length
+    const up = it.parent >= 0 ? nodes[it.parent]!.ai : null
+    const ai = n.ai?.kind === 'deleted' ? 'deleted' : up === 'deleted' || up === 'gone' ? 'gone' : n.ai?.kind ?? null
     const m: MapNode = {
       id: it.id, depth: it.depth, x: 0, y: 0, w, h, lines, full: plainText(label), clipped,
       parent: it.parent >= 0 ? nodes[it.parent]!.id : null, kids: [], hasKids: n.children.length > 0,
-      collapsed, hidden: 0, done: n.checked === true, check, side: 1, branch: -1, fs, lh,
+      collapsed, hidden: 0, done: n.checked === true, ai, aiTip: aiTip(n), check, side: 1, branch: -1, fs, lh,
     }
     nodes.push(m)
     byId.set(it.id, m)

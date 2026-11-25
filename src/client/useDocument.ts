@@ -12,7 +12,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OutlineDoc } from '../shared/model.ts'
 import { History, type Selection } from '../shared/history.ts'
 import { api, ApiError } from './api.ts'
-import { broadcast, onBroadcast } from './sync.ts'
+import { broadcast, onBroadcast, onServerChange } from './sync.ts'
+import { mergeDocs } from '../shared/merge.ts'
+import { ROUTE_PREFIX } from '../shared/api.ts'
 
 /** Debounce before an autosave. */
 export const SAVE_DELAY_MS = 800
@@ -67,6 +69,8 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
 
   const docRef = useRef<OutlineDoc | null>(null)
   const baseRev = useRef({ rev: 0 })
+  /** Last version known to match the server: the merge base for outside edits. */
+  const baseDoc = useRef<OutlineDoc | null>(null)
   const sentRef = useRef<OutlineDoc | null>(null)
   const dirty = useRef(false)
   const saving = useRef<Promise<void> | null>(null)
@@ -77,6 +81,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
   const history = useRef(new History<OutlineDoc>(200))
   const nonce = useRef(0)
   const onSavedRef = useRef(onSaved)
+  const commitRef = useRef<(next: OutlineDoc) => void>(() => {})
   onSavedRef.current = onSaved
 
   const runSave = useCallback(async (keepalive: boolean): Promise<void> => {
@@ -97,6 +102,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
         onSavedRef.current(saved)
         broadcast({ kind: 'doc', docId: saved.id, revision: saved.revision })
         if (baseRev.current !== box) return
+        baseDoc.current = saved
         retry.current = 0
         setStatusMessage(null)
         if (docRef.current === sent) {
@@ -107,6 +113,24 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
         }
       } catch (error) {
         if (baseRev.current !== box) { console.warn('[dsh-mindmap] save of a closed document failed:', error); return }
+        if (error instanceof ApiError && error.code === 'conflict' && error.current !== undefined && baseDoc.current !== null && docRef.current !== null && error.current.id === docRef.current.id) {
+          // Someone else (usually the AI tool) saved first: merge and save again.
+          const theirs = error.current
+          let merged: ReturnType<typeof mergeDocs> | null = null
+          try { merged = mergeDocs(baseDoc.current, docRef.current, theirs) } catch (e) { console.warn('[dsh-mindmap] merge failed:', e) }
+          if (merged !== null) {
+            history.current.record(docRef.current, selection.current, null)
+            box.rev = theirs.revision
+            baseDoc.current = theirs
+            docRef.current = merged.doc
+            setDoc(merged.doc)
+            onSavedRef.current(theirs)
+            setStatus('dirty')
+            setStatusMessage(merged.conflicts > 0 ? `已合并外部修改；${merged.conflicts} 处冲突保留了本地内容` : '已合并外部修改')
+            setTick(t => t + 1)
+            return
+          }
+        }
         if (error instanceof ApiError && error.code === 'conflict' && error.current !== undefined) {
           blocked.current = true
           setConflict(error.current)
@@ -144,6 +168,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
     dirty.current = false
     retry.current = 0
     docRef.current = null
+    baseDoc.current = null
     setDoc(null)
     setConflict(null)
     setFocus(null)
@@ -155,6 +180,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
     api.doc(docId).then(d => {
       if (!alive) return
       docRef.current = d
+      baseDoc.current = d
       baseRev.current = { rev: d.revision }
       setDoc(d)
       setLoading(false)
@@ -215,6 +241,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
         baseRev.current.rev = fresh.revision
         history.current.clear()
         docRef.current = fresh
+        baseDoc.current = fresh
         setDoc(fresh)
         onSavedRef.current(fresh)
         setTick(t => t + 1)
@@ -222,12 +249,39 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
         console.warn('[dsh-mindmap] refetch failed:', error)
       }
     }
+    // A dirty copy with no save in flight merges the outside edit right away,
+    // so AI changes show up while the user keeps typing.
+    const mergeIn = async (rev: number): Promise<void> => {
+      if (rev <= baseRev.current.rev || blocked.current || saving.current !== null) return
+      try {
+        const fresh = await api.doc(docId)
+        const mine = docRef.current
+        const base = baseDoc.current
+        if (!alive || mine === null || base === null || blocked.current || saving.current !== null || fresh.id !== mine.id || fresh.revision <= baseRev.current.rev) return
+        const merged = mergeDocs(base, mine, fresh)
+        history.current.record(mine, selection.current, null)
+        baseRev.current.rev = fresh.revision
+        baseDoc.current = fresh
+        onSavedRef.current(fresh)
+        commitRef.current(merged.doc)
+        if (merged.conflicts > 0) setStatusMessage(`已合并外部修改；${merged.conflicts} 处冲突保留了本地内容`)
+        setTick(t => t + 1)
+      } catch (error) {
+        console.warn('[dsh-mindmap] merge of an outside edit failed:', error)
+      }
+    }
     const off = onBroadcast(m => { if (m.kind === 'doc' && m.docId === docId) void check(m.revision) })
+    const offServer = onServerChange(ROUTE_PREFIX + '/events', c => {
+      if (c.kind === 'library') { void check(); return }
+      if (c.docId !== docId) return
+      if (!dirty.current) void check(c.revision); else void mergeIn(c.revision)
+    })
     const visible = (): void => { if (document.visibilityState === 'visible') void check() }
     document.addEventListener('visibilitychange', visible)
     return () => {
       alive = false
       off()
+      offServer()
       document.removeEventListener('visibilitychange', visible)
     }
   }, [docId, reloadKey])
@@ -242,6 +296,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
       timer.current = window.setTimeout(() => { void runSave(false) }, SAVE_DELAY_MS)
     }
   }, [runSave])
+  commitRef.current = commit
 
   const requestFocus = useCallback((id: string, caret: number | 'end' | 'start') => {
     nonce.current++
@@ -273,6 +328,7 @@ export function useDocument(docId: string | null, onSaved: (doc: OutlineDoc) => 
       if (current === null) return null
       blocked.current = false
       baseRev.current.rev = current.revision
+      baseDoc.current = current
       setStatusMessage(null)
       if (which === 'theirs') {
         history.current.clear()

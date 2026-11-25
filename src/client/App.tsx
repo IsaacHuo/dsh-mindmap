@@ -1,6 +1,8 @@
 /**
  * 思维导图 page: document navigator on the left, editor (大纲 / 导图) on the
- * right. One document model drives both views.
+ * right. One document model drives both views. With `compact` it is the
+ * right-sidebar view next to a conversation: no navigator, a document picker
+ * in the toolbar, and 插入到对话 in the node menu.
  * @module dsh-mindmap/client/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -10,7 +12,10 @@ import { parseMarkdown, toMarkdown } from '../shared/markdown.ts'
 import { parseOpml, toOpml } from '../shared/opml.ts'
 import type { BackupInfo, BackupKind, QuarantinedFile } from '../shared/api.ts'
 import { api } from './api.ts'
-import { onBroadcast } from './sync.ts'
+import { onBroadcast, onServerChange } from './sync.ts'
+import { ROUTE_PREFIX } from '../shared/api.ts'
+import { PendingBadge, useAiActions } from './aiActions.tsx'
+import type { BesideTarget, ChatBridge } from './bridge.ts'
 import { countTree } from './docUtils.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { useDocument } from './useDocument.ts'
@@ -31,23 +36,32 @@ function lsSet(key: string, value: string | null): void {
 }
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** Page root. */
-export function App(): ReactNode {
-  return <DialogHost><Shell /></DialogHost>
+/** Options of the right-sidebar (compact) view. */
+export interface CompactOptions {
+  /** The conversation next to the map. */
+  chat?: ChatBridge
+  /** Document / node to show first. */
+  initial?: BesideTarget
 }
 
-function Shell(): ReactNode {
+/** Page root. */
+export function App(props: { compact?: CompactOptions } = {}): ReactNode {
+  return <DialogHost><Shell compact={props.compact} /></DialogHost>
+}
+
+function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
+  const compact = props.compact
   const dialogs = useDialogs()
   const appRef = useRef<HTMLDivElement>(null)
   const [library, setLibrary] = useState<Library | null>(null)
   const [libError, setLibError] = useState<string | null>(null)
-  const [activeId, setActiveId] = useState<string | null>(() => lsGet(LS_LAST))
+  const [activeId, setActiveId] = useState<string | null>(() => compact?.initial?.docId ?? lsGet(LS_LAST))
   const [view, setViewState] = useState<ViewMode>(() => (lsGet(LS_VIEW) === 'map' ? 'map' : 'outline'))
   const [rootId, setRootId] = useState<string | null>(null)
   const [mapSel, setMapSel] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [sideOpen, setSideOpen] = useState(false)
-  const pendingNode = useRef<string | null>(null)
+  const pendingNode = useRef<string | null>(compact?.initial?.nodeId ?? null)
   const lastWarnings = useRef('')
   // A new key per menu: a submenu opened from a menu item remounts, so it is re-clamped and focused.
   const menuKey = useRef(0)
@@ -72,6 +86,10 @@ function Shell(): ReactNode {
   useEffect(() => { void refreshLibrary() }, [refreshLibrary])
   // Another tab changed the library (or saved a document): refresh the index.
   useEffect(() => onBroadcast(() => { void refreshLibrary() }), [refreshLibrary])
+  // The host pushes library changes and AI edits (titles / times in the index).
+  useEffect(() => onServerChange(ROUTE_PREFIX + '/events', c => {
+    if (c.kind === 'library' || c.source === 'ai') void refreshLibrary()
+  }), [refreshLibrary])
 
   // Open the most recently edited doc when none is selected or the remembered one is gone.
   useEffect(() => {
@@ -82,7 +100,7 @@ function Shell(): ReactNode {
       setActiveId(next?.id ?? null)
     }
   }, [library, activeId])
-  useEffect(() => { lsSet(LS_LAST, activeId) }, [activeId])
+  useEffect(() => { if (compact === undefined) lsSet(LS_LAST, activeId) }, [activeId, compact])
 
   const onSaved = useCallback((saved: OutlineDoc) => {
     setLibrary(lib => (lib === null ? lib : { ...lib, docs: lib.docs.map(d => (d.id === saved.id ? { ...d, title: saved.title, updatedAt: saved.updatedAt } : d)) }))
@@ -94,7 +112,7 @@ function Shell(): ReactNode {
   useEffect(() => { setRootId(null); setMapSel(null) }, [activeId])
   const effectiveRoot = doc !== null && rootId !== null && doc.nodes[rootId] !== undefined ? rootId : doc?.rootId ?? null
 
-  const setView = (v: ViewMode): void => { setViewState(v); lsSet(LS_VIEW, v) }
+  const setView = (v: ViewMode): void => { setViewState(v); if (compact === undefined) lsSet(LS_VIEW, v) }
 
   // Undo / redo may restore a node outside the zoomed subtree: zoom out so it is visible.
   useEffect(() => {
@@ -127,6 +145,14 @@ function Shell(): ReactNode {
     if (doc.nodes[id] !== undefined) { setView('outline'); reveal(doc, id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id])
+
+  const revealRef = useRef(reveal)
+  revealRef.current = reveal
+  const ai = useAiActions({
+    doc, state, dialogs, onMenu: setMenu,
+    ...(compact?.chat !== undefined ? { chat: compact.chat } : {}),
+    reveal: id => { const d = state.doc; if (d !== null && d.nodes[id] !== undefined) { setView('outline'); revealRef.current(d, id) } },
+  })
 
   const openDoc = useCallback((id: string, nodeId: string | null = null) => {
     setSideOpen(false)
@@ -308,15 +334,20 @@ function Shell(): ReactNode {
   }, [])
 
   return (
-    <div ref={appRef} className={'mm-app' + (sideOpen ? ' mm-side-open' : '')} onKeyDown={onKeyDown}>
+    <div ref={appRef} className={'mm-app' + (sideOpen ? ' mm-side-open' : '') + (compact !== undefined ? ' mm-compact' : '')} onKeyDown={onKeyDown}>
       <div className="mm-scrim" onClick={() => setSideOpen(false)} />
-      <Sidebar library={library} error={libError} activeId={activeId} onOpen={openDoc} onCreate={(folderId, markdown) => void createDoc(markdown === undefined ? { folderId } : { folderId, markdown })}
+      {compact !== undefined ? null : <Sidebar library={library} error={libError} activeId={activeId} onOpen={openDoc} onCreate={(folderId, markdown) => void createDoc(markdown === undefined ? { folderId } : { folderId, markdown })}
         onPatch={patchMeta} onTrash={trashDoc} onRefresh={refreshLibrary} onMenu={setMenu} onImport={() => fileInput.current?.click()} onBackups={openBackups}
-        onChanged={setLibrary} />
+        onChanged={setLibrary} />}
       <input ref={fileInput} type="file" accept=".md,.markdown,.txt,.opml,.xml" multiple hidden onChange={e => { void importFiles(e.target.files); e.target.value = '' }} />
       <main className="mm-main">
         <div className="mm-toolbar">
-          <button type="button" className="mm-icon-btn mm-side-toggle" aria-label="文档列表" onClick={() => setSideOpen(o => !o)}><Icon name="menu" /></button>
+          {compact !== undefined ? (
+            <select className="mm-doc-pick" aria-label="文档" value={activeId ?? ''} onChange={e => { if (e.target.value.length > 0) openDoc(e.target.value) }}>
+              {activeId === null ? <option value="">选择文档…</option> : null}
+              {(library?.docs ?? []).filter(d => d.trashedAt === undefined).sort((a, b) => b.updatedAt - a.updatedAt).map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
+            </select>
+          ) : <button type="button" className="mm-icon-btn mm-side-toggle" aria-label="文档列表" onClick={() => setSideOpen(o => !o)}><Icon name="menu" /></button>}
           {doc !== null ? (
             <>
               <div className="mm-seg" role="tablist" aria-label="视图">
@@ -329,6 +360,7 @@ function Shell(): ReactNode {
               <button type="button" className="mm-icon-btn mm-secondary" title="全部展开" aria-label="全部展开" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true })}><Icon name="expand" /></button>
               <button type="button" className="mm-icon-btn mm-secondary" title="全部折叠" aria-label="全部折叠" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true })}><Icon name="collapse" /></button>
               <span className="mm-grow" />
+              <PendingBadge count={ai.pending} onOpen={ai.pendingMenu} />
               <span className={'mm-status' + (state.status === 'error' || state.status === 'conflict' ? ' mm-err' : '')} title={state.statusMessage ?? undefined} aria-live="polite">{statusText}</span>
               <button type="button" className="mm-icon-btn mm-secondary" title="导出" aria-label="导出" onClick={e => {
                 const r = e.currentTarget.getBoundingClientRect()
@@ -378,6 +410,7 @@ function Shell(): ReactNode {
               <DocHeader doc={doc} rootId={effectiveRoot} state={state} onZoom={id => setRootId(id === doc.rootId ? null : id)} />
               <Outline state={state} doc={doc} rootId={effectiveRoot} onZoom={id => setRootId(id === doc.rootId ? null : id)} onMenu={setMenu}
                 findRequest={findRequest} tagFilter={tagFilter} onTagFilter={setTagFilter}
+                extraMenu={ai.extraMenu} onSessions={ai.sessionsMenu}
                 onFocusTitle={() => {
                   const el = document.querySelector<HTMLTextAreaElement>('.mm-app .mm-title')
                   if (el !== null) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
@@ -387,7 +420,7 @@ function Shell(): ReactNode {
           </div>
         ) : (
           <MindMap state={state} doc={doc} rootId={effectiveRoot} rootLabel={effectiveRoot === doc.rootId ? doc.title : doc.nodes[effectiveRoot]!.text}
-            onMenu={setMenu} selected={mapSel} onSelect={setMapSel}
+            onMenu={setMenu} selected={mapSel} onSelect={setMapSel} extraMenu={ai.extraMenu}
             onEditInOutline={id => { setView('outline'); reveal(doc, id) }} />
         )}
       </main>

@@ -48,6 +48,11 @@ export type MenuEntry =
   | { kind: 'sep' }
   | { kind: 'label'; label: string }
 
+/** Prefix a non-empty group of entries with a separator. */
+export function withSep(items: MenuEntry[]): MenuEntry[] {
+  return items.length > 0 ? [{ kind: 'sep' }, ...items] : []
+}
+
 /** Menu state helper. */
 export interface MenuState { x: number; y: number; items: MenuEntry[] }
 
@@ -109,7 +114,7 @@ export function PopupMenu(props: { x: number; y: number; items: MenuEntry[]; onC
   )
 }
 
-interface DialogApi {
+export interface DialogApi {
   confirm(opts: { title: string; message?: string; ok?: string; danger?: boolean }): Promise<boolean>
   prompt(opts: { title: string; value?: string; placeholder?: string; ok?: string; multiline?: boolean; message?: string }): Promise<string | null>
   show(opts: { title: string; body: (close: () => void) => ReactNode }): void

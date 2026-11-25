@@ -12,13 +12,31 @@ process.env.DSH_MINDMAP_DIR ||= resolve(root, '.tmp/harness-data')
 const host = await import(pathToFileURL(join(root, 'lib/index.js')).href)
 
 const routes = []
+const tools = []
+const services = {
+  webServer: { register(r) { routes.push(r); return () => {} } },
+  tools: { register(def) { tools.push(def); return () => {} } },
+  systemPrompt: { section() { return () => {} } },
+}
 const ctx = {
   effect(fn) { fn() },
-  inject(_deps, cb) {
-    cb({ ...ctx, webServer: { register(r) { routes.push(r); return () => {} } } })
+  inject(deps, cb) {
+    const sub = { ...ctx }
+    for (const d of deps) sub[d] = services[d]
+    cb(sub)
   },
 }
 host.apply(ctx)
+
+// POST /__tool {args, sessionId?}: run the registered agent tool (e2e of AI edits).
+routes.push({ kind: 'exact', path: '/__tool', async handler(req, res) {
+  let body = ''
+  for await (const c of req) body += c
+  const { args, sessionId } = JSON.parse(body || '{}')
+  const out = await tools[0].execute(args, { agent: sessionId ? { id: sessionId } : undefined })
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify(out))
+} })
 
 const files = {
   '/react.js': 'node_modules/react/umd/react.development.js',

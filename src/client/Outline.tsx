@@ -19,7 +19,8 @@ import { ancestors, flatten, toItems, type OutlineDoc, type OutlineNode, type Tr
 import * as ops from '../shared/ops.ts'
 import { renderInline, type InlineMark } from './inline.tsx'
 import type { DocumentState } from './useDocument.ts'
-import { Icon, useDialogs, type MenuState } from './ui.tsx'
+import { Icon, useDialogs, withSep, type MenuEntry, type MenuState } from './ui.tsx'
+import { aiTip, aiViews, type AiView } from './ai.ts'
 import { collapsedAncestors, filterRows, findMatches, NODES_MIME, offsetAtX, onFirstLine, onLastLine, rangeIds, replaceAll, replaceMatch, toggleMark, type FindMatch } from './outline/helpers.ts'
 import { caretBoxes } from './outline/measure.ts'
 import { clipboardItems, selectionItems, selectionMarkdown } from './outline/clipboard.ts'
@@ -53,6 +54,7 @@ interface RowControl {
   noteBlur(id: string): void
   treeKey(e: KeyboardEvent<HTMLDivElement>): void
   menu(e: MouseEvent, id: string): void
+  sessions(e: MouseEvent, id: string): void
   dragStart(e: DragEvent, id: string): void
   dragOver(e: DragEvent, id: string, depth: number): void
   drop(e: DragEvent): void
@@ -84,15 +86,16 @@ function caretFromPoint(container: HTMLElement, x: number, y: number, source: st
 
 const isComposing = (e: KeyboardEvent): boolean => e.nativeEvent.isComposing || e.keyCode === 229
 
-const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing: Field | null; selected: boolean; tabStop: boolean; marks: RowMarks; tags: boolean; filtered?: boolean; drop: ops.DropPosition | null; dragging: boolean; ctl: RowControl }): ReactNode {
+const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing: Field | null; selected: boolean; tabStop: boolean; marks: RowMarks; tags: boolean; filtered?: boolean; drop: ops.DropPosition | null; dragging: boolean; ai?: AiView; ctl: RowControl }): ReactNode {
   const { node, depth, ctl } = props
+  const tip = props.ai !== undefined && props.ai !== 'gone' ? aiTip(node) : null
   const hasKids = node.children.length > 0
   const textRef = useRef<HTMLDivElement>(null)
   const onTag = props.tags ? ctl.tag : undefined
   const note = node.note ?? ''
-  const cls = 'mm-node' + (node.checked === true ? ' mm-done' : '') + (props.selected ? ' mm-selected' : '') + (props.drop !== null ? ' mm-drop-' + props.drop : '') + (props.dragging ? ' mm-dragging' : '')
+  const cls = 'mm-node' + (node.checked === true ? ' mm-done' : '') + (props.selected ? ' mm-selected' : '') + (props.drop !== null ? ' mm-drop-' + props.drop : '') + (props.dragging ? ' mm-dragging' : '') + (props.ai !== undefined ? ' mm-ai-' + props.ai : '')
   return (
-    <div className={cls} data-node-id={node.id} role="treeitem" aria-level={depth + 1} aria-expanded={hasKids ? !node.collapsed : undefined} aria-selected={props.selected}
+    <div className={cls} data-node-id={node.id} title={tip ?? undefined} role="treeitem" aria-level={depth + 1} aria-expanded={hasKids ? !node.collapsed : undefined} aria-selected={props.selected}
       tabIndex={props.tabStop ? 0 : -1}
       style={{ paddingLeft: depth * INDENT, ['--mm-drop-left' as string]: depth * INDENT + 40 + 'px' }}
       onDragOver={e => ctl.dragOver(e, node.id, depth)} onDrop={ctl.drop} onContextMenu={e => ctl.menu(e, node.id)}>
@@ -119,7 +122,10 @@ const Row = memo(function Row(props: { node: OutlineNode; depth: number; editing
               if (e.button !== 0) return
               e.preventDefault()
               ctl.startEdit(node.id, textRef.current !== null ? caretFromPoint(textRef.current, e.clientX, e.clientY, node.text) : 'end')
-            }}>{renderInline(node.text, 'i', { marks: props.marks.text, onTag })}{node.text.endsWith('\n') ? '\u200b' : null}</div>
+            }}>{renderInline(node.text, 'i', { marks: props.marks.text, onTag })}{node.text.endsWith('\n') ? '\u200b' : null}{(node.sessions?.length ?? 0) > 0 ? (
+              <button type="button" tabIndex={-1} className="mm-sess-badge" title="关联的会话" aria-label={'关联的会话 ' + node.sessions!.length}
+                onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onClick={e => { e.stopPropagation(); ctl.sessions(e, node.id) }}>💬 {node.sessions!.length}</button>
+            ) : null}</div>
         )}
         {props.editing === 'note' ? (
           <textarea ref={ctl.bindInput} className="mm-note mm-note-input" rows={1} value={note} spellCheck={false} aria-label="备注"
@@ -148,6 +154,10 @@ export interface OutlineProps {
   onTagFilter?(tag: string | null): void
   /** ArrowUp on the first visual line of the first row. */
   onFocusTitle?(): void
+  /** Extra node-menu entries (AI review, sessions, references), shown before delete. */
+  extraMenu?(id: string): MenuEntry[]
+  /** The 💬 badge of a node with bound sessions was clicked. */
+  onSessions?(id: string, x: number, y: number): void
 }
 
 /** The outline editor for one (sub)tree. */
@@ -184,6 +194,7 @@ export function Outline(props: OutlineProps): ReactNode {
 
   const tag = props.tagFilter ?? null
   const keep = tag !== null ? editing : null
+  const ai = useMemo(() => aiViews(doc, rootId), [doc, rootId])
   const rows = useMemo(() => tag !== null ? filterRows(doc, rootId, tag, keep !== null ? [keep] : []) : flatten(doc, rootId, true), [doc, rootId, tag, keep])
   const order = useMemo(() => rows.map(r => r.id), [rows])
   const orderRef = useRef(order)
@@ -457,6 +468,17 @@ export function Outline(props: OutlineProps): ReactNode {
           return
         }
         const lower = k.length === 1 ? k.toLowerCase() : k
+        // Ctrl+A: first press selects this node's text (browser default); a
+        // second press (text already fully selected, or empty) selects every row.
+        if (mod && !e.altKey && !e.shiftKey && lower === 'a' && start === 0 && end === val.length) {
+          const o = orderRef.current
+          if (o.length === 0) return
+          stop()
+          propsRef.current.state.breakMerge()
+          setEditing(null)
+          setSel({ anchor: o[0]!, head: o[o.length - 1]! })
+          return
+        }
         const mark = !mod || e.altKey ? null
           : !e.shiftKey && lower === 'b' ? '**'
           : !e.shiftKey && lower === 'i' ? '*'
@@ -639,6 +661,7 @@ export function Outline(props: OutlineProps): ReactNode {
           { kind: 'sep' },
           { label: '复制为 Markdown', onSelect: () => copy(selectionMarkdown(d, [id]), '已复制 Markdown（含子节点）') },
           { label: '复制文本', onSelect: () => copy(n.text, '已复制') },
+          ...withSep(p.extraMenu?.(id) ?? []),
           { kind: 'sep' },
           { label: n.children.length > 0 ? '删除节点及其子节点' : '删除节点', shortcut: 'Ctrl+Shift+⌫', danger: true, onSelect: () => {
             const { prev, next } = nb(id)
@@ -649,6 +672,9 @@ export function Outline(props: OutlineProps): ReactNode {
             dialogs.toast('已删除，可按 Ctrl+Z 撤销')
           } },
         ] })
+      },
+      sessions(e, id) {
+        propsRef.current.onSessions?.(id, e.clientX, e.clientY)
       },
       dragStart(e, id) {
         const d = docRef.current
@@ -821,7 +847,7 @@ export function Outline(props: OutlineProps): ReactNode {
         {rows.map(r => {
           const node = doc.nodes[r.id]!
           return <Row key={r.id} node={node} depth={r.depth} editing={editing === r.id ? field : null} selected={selected.has(r.id)} tabStop={tabStopId === r.id}
-            marks={marksById.get(r.id) ?? NO_MARKS} tags={tags} filtered={tag !== null} drop={drop?.id === r.id ? drop.pos : null} dragging={dragId === r.id} ctl={ctl} />
+            marks={marksById.get(r.id) ?? NO_MARKS} tags={tags} filtered={tag !== null} drop={drop?.id === r.id ? drop.pos : null} dragging={dragId === r.id} ai={ai.get(r.id)} ctl={ctl} />
         })}
         {rows.length === 0 && tag === null ? (
           <button type="button" className="mm-add" onClick={addFirst}><Icon name="plus" size={14} />添加节点</button>

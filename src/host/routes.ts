@@ -92,6 +92,21 @@ function limitFor(path: string): number {
   return BODY_LIMITS.other
 }
 
+/** Heartbeat interval of the /events stream. */
+export const EVENTS_HEARTBEAT_MS = 15_000
+
+/** Server-sent events: one `change` event per saved document / library change. */
+function streamEvents(storage: MindmapStorage, req: IncomingMessage, res: ServerResponse): void {
+  res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' })
+  res.write('retry: 3000\n\n')
+  const off = storage.onChange(event => { res.write('event: change\ndata: ' + JSON.stringify(event) + '\n\n') })
+  const beat = setInterval(() => res.write(': ping\n\n'), EVENTS_HEARTBEAT_MS)
+  beat.unref?.()
+  const close = (): void => { clearInterval(beat); off() }
+  req.on('close', close)
+  res.on('close', close)
+}
+
 /** Build the prefix handler. */
 export function createHandler(storage: MindmapStorage): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
@@ -103,6 +118,8 @@ export function createHandler(storage: MindmapStorage): (req: IncomingMessage, r
       const method = req.method ?? 'GET'
 
       if (method === 'GET') {
+        if (path === '/events') { streamEvents(storage, req, res); return }
+        if (path === '/info') { await storage.ready(); ok(res, { dataDir: storage.dir, docsDir: storage.documentsDir }); return }
         if (path === '/library') { const library = await storage.getLibrary(); ok(res, { library, warnings: await storage.takeWarnings() }); return }
         const doc = DOC_RE.exec(path)
         if (doc !== null) { ok(res, await storage.getDoc(doc[1]!)); return }

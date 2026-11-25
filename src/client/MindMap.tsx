@@ -19,7 +19,7 @@ import {
   type MapLayout, type Measure, type MapLayoutMode, type MapNode, type Side,
 } from './mapLayout.ts'
 import type { DocumentState } from './useDocument.ts'
-import { Icon, type MenuState } from './ui.tsx'
+import { Icon, withSep, type MenuEntry, type MenuState } from './ui.tsx'
 
 const MIN_K = 0.2
 const MAX_K = 3
@@ -47,6 +47,8 @@ export interface MindMapProps {
   /** Selected node, shared with the outline focus. */
   selected: string | null
   onSelect(id: string | null): void
+  /** Extra node-menu entries (AI review, sessions, references), shown before delete. */
+  extraMenu?(id: string): MenuEntry[]
 }
 
 const clampK = (k: number): number => Math.min(MAX_K, Math.max(MIN_K, k))
@@ -485,6 +487,7 @@ export function MindMap(props: MindMapProps): ReactNode {
       { label: n.collapsed === true || override.has(id) ? '展开' : '折叠', shortcut: '空格', disabled: isRoot || n.children.length === 0, onSelect: () => toggle(id) },
       { label: '在大纲中编辑', disabled: isRoot && rootId === doc.rootId, onSelect: () => props.onEditInOutline(id) },
       { label: '以此为中心', onSelect: () => centerOn(id) },
+      ...withSep(props.extraMenu?.(id) ?? []),
       { kind: 'sep' },
       { label: n.children.length > 0 ? '删除节点及其子节点' : '删除节点', shortcut: 'Delete', danger: true, disabled: isRoot, onSelect: () => remove(id) },
     ] })
@@ -642,7 +645,7 @@ export function MindMap(props: MindMapProps): ReactNode {
 // ---------- layers ----------
 
 function nodeClass(n: MapNode): string {
-  return 'mm-map-node' + (n.depth === 0 ? ' mm-root' : n.depth === 1 ? ' mm-d1' : ' mm-dn') + branchCls(n) + (n.done ? ' mm-done' : '')
+  return 'mm-map-node' + (n.depth === 0 ? ' mm-root' : n.depth === 1 ? ' mm-d1' : ' mm-dn') + branchCls(n) + (n.done ? ' mm-done' : '') + (n.ai !== null ? ' mm-ai-' + n.ai : '')
 }
 
 function Toggle(props: { n: MapNode }): ReactNode {
@@ -670,7 +673,7 @@ function NodeView(props: { n: MapNode; editing: boolean }): ReactNode {
         const p = textPos(n, i)
         return <text key={i} x={p.x} y={p.y} xmlSpace="preserve">{line}</text>
       })}
-      {n.clipped ? <title>{n.full}</title> : null}
+      {n.aiTip !== null ? <title>{(n.clipped ? n.full + '\n\n' : '') + n.aiTip}</title> : n.clipped ? <title>{n.full}</title> : null}
       {n.depth > 0 && n.hasKids ? <Toggle n={n} /> : null}
     </g>
   )

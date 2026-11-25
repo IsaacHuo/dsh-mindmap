@@ -8,19 +8,30 @@ export const CSS = "/* dsh-mindmap (思维导图) — scoped under .mm-app */\n.
 import { MAP_CSS } from './mapStyles.ts'
 import { APP_CSS } from './appStyles.ts'
 import { OUTLINE_CSS } from './outlineStyles.ts'
+import { AI_CSS } from './aiStyles.ts'
 
 const STYLE_ID = 'dsh-mindmap-style'
+let users = 0
 
-/** Inject the stylesheet once; returns a remover. */
+/**
+ * Inject the stylesheet once; returns a remover. Reference-counted: the main
+ * page and the right-sidebar view can be mounted at the same time.
+ */
 export function installStyles(): () => void {
   if (typeof document === 'undefined') return () => {}
   let el = document.getElementById(STYLE_ID)
   if (el === null) {
     el = document.createElement('style')
     el.id = STYLE_ID
-    el.textContent = CSS + APP_CSS + OUTLINE_CSS + MAP_CSS
+    el.textContent = CSS + APP_CSS + OUTLINE_CSS + MAP_CSS + '\n' + AI_CSS
     document.head.appendChild(el)
   }
-  const node = el
-  return () => { node.remove() }
+  users++
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    users--
+    if (users <= 0) { users = 0; document.getElementById(STYLE_ID)?.remove() }
+  }
 }
