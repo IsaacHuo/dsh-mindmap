@@ -100,7 +100,15 @@ export interface OutlineDoc {
 export interface DocMeta {
   id: string
   title: string
+  /** Legacy (≤0.3) folder; kept only to migrate into a workspace. */
   folderId: string | null
+  /**
+   * DSH workspace the document belongs to. undefined = never assigned (still
+   * eligible for the folder → workspace migration); null = 未归类.
+   */
+  workspaceId?: string | null
+  /** Last known workspace name (display fallback, agent tool output). */
+  workspaceName?: string
   favorite: boolean
   createdAt: number
   updatedAt: number
@@ -153,6 +161,8 @@ export const ID_RE = /^[a-z0-9-]{6,64}$/
 
 /** Max title length. */
 export const MAX_TITLE = 200
+/** DSH workspace ids are opaque; only bound their size and charset. */
+export const WORKSPACE_ID_RE = /^[A-Za-z0-9._:@\/+-]{1,200}$/
 
 let counter = 0
 

@@ -1,23 +1,25 @@
 /**
- * Left document navigator: favorites, nested folders, loose documents and the
- * trash. Documents and folders can be dragged onto folders (or onto 未分类 /
- * the top level); every row has a hover ⋯ button that opens the same menu as
+ * Left document navigator: favorites, documents grouped by DSH workspace
+ * (工作区, plus 未归类) and the trash. Documents can be dragged onto a
+ * workspace group; every row has a hover ⋯ button that opens the same menu as
  * a right click, so all actions are keyboard and touch reachable.
  * @module dsh-mindmap/client/Sidebar
  */
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
-import { flatten, type DocMeta, type Folder, type Library, type OutlineDoc } from '../shared/model.ts'
+import { flatten, type DocMeta, type Library, type OutlineDoc } from '../shared/model.ts'
 import type { SearchHit } from '../shared/search.ts'
 import { api } from './api.ts'
-import { folderSubtree, sortDocs, type SortKey } from './docUtils.ts'
+import { sortDocs, type SortKey } from './docUtils.ts'
 import { renderInline } from './inline.tsx'
 import { Icon, relTime, useDialogs, type MenuEntry, type MenuState } from './ui.tsx'
+import { groupByWorkspace, type Workspace, type WorkspaceGroup } from './workspaces.ts'
 
-const LS_FOLDERS = 'dsh-mindmap:open-folders'
+const LS_CLOSED = 'dsh-mindmap:closed-workspaces'
 const LS_SORT = 'dsh-mindmap:sort'
 const TRASH_DAYS = 30
 const DRAG_DOC = 'application/x-dsh-mindmap-doc'
-const DRAG_FOLDER = 'application/x-dsh-mindmap-folder'
+/** Group key: workspace id, '' for 未归类. */
+const gKey = (id: string | null | undefined): string => (typeof id === 'string' ? id : '')
 
 /** Document ordering inside a list. */
 const SORT_LABEL: Record<SortKey, string> = { updated: '最近编辑', title: '标题', created: '创建时间' }
@@ -30,27 +32,22 @@ function lsSet(key: string, value: string): void {
 }
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** Sort a copy of the documents. */
+type Drag = { kind: 'doc'; id: string } | null
 
-/** Folder ids in the subtree of id (including id). */
-
-/** "父 / 子" path for menus. */
-function folderPath(byId: ReadonlyMap<string, Folder>, id: string): string {
-  const parts: string[] = []
-  const seen = new Set<string>()
-  for (let f = byId.get(id); f !== undefined && !seen.has(f.id); f = f.parentId != null ? byId.get(f.parentId) : undefined) { seen.add(f.id); parts.unshift(f.name) }
-  return parts.join(' / ')
-}
-
-type Drag = { kind: 'doc' | 'folder'; id: string } | null
+/** Workspace assignment sent to the host. */
+export interface WorkspaceTarget { workspaceId: string | null; workspaceName?: string }
+const target = (g: WorkspaceGroup): WorkspaceTarget => (g.id === null ? { workspaceId: null } : { workspaceId: g.id, workspaceName: g.name })
 
 export interface SidebarProps {
   library: Library | null
   error: string | null
   activeId: string | null
   onOpen(id: string, nodeId?: string | null): void
-  onCreate(folderId: string | null, markdown?: string): void
-  onPatch(id: string, body: { title?: string; folderId?: string | null; favorite?: boolean }): Promise<void>
+  /** Live DSH workspaces, or null when DSH does not provide them. */
+  known: Workspace[] | null
+  /** Create a document; `where` undefined = default workspace. */
+  onCreate(where: WorkspaceTarget | undefined, markdown?: string): void
+  onPatch(id: string, body: { title?: string; favorite?: boolean; workspaceId?: string | null; workspaceName?: string }): Promise<void>
   onTrash(id: string): Promise<void>
   onRefresh(): Promise<Library | null>
   onMenu(m: MenuState): void
@@ -65,7 +62,8 @@ export function Sidebar(props: SidebarProps): ReactNode {
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[] | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [openFolders, setOpenFolders] = useState<Set<string>>(() => new Set((lsGet(LS_FOLDERS) ?? '').split(',').filter(Boolean)))
+  // Groups are open by default; remember the closed ones ('' = 未归类 is stored as '-').
+  const [closed, setClosed] = useState<Set<string>>(() => new Set((lsGet(LS_CLOSED) ?? '').split(',').filter(Boolean).map(k => (k === '-' ? '' : k))))
   const [showTrash, setShowTrash] = useState(false)
   const [sort, setSortState] = useState<SortKey>(() => { const v = lsGet(LS_SORT); return v === 'title' || v === 'created' ? v : 'updated' })
   const [over, setOver] = useState<string | null>(null)
@@ -74,7 +72,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
   const propsRef = useRef(props)
   propsRef.current = props
 
-  useEffect(() => { lsSet(LS_FOLDERS, Array.from(openFolders).join(',')) }, [openFolders])
+  useEffect(() => { lsSet(LS_CLOSED, Array.from(closed).map(k => (k === '' ? '-' : k)).join(',')) }, [closed])
   const setSort = (k: SortKey): void => { setSortState(k); lsSet(LS_SORT, k) }
 
   // Search: 250 ms debounce, independent of library refreshes.
@@ -90,20 +88,14 @@ export function Sidebar(props: SidebarProps): ReactNode {
 
   const live = useMemo(() => sortDocs((lib?.docs ?? []).filter(d => d.trashedAt === undefined), sort), [lib, sort])
   const trash = useMemo(() => (lib?.docs ?? []).filter(d => d.trashedAt !== undefined).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0)), [lib])
-  const folders = useMemo(() => [...(lib?.folders ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')), [lib])
-  const byId = useMemo(() => new Map(folders.map(f => [f.id, f])), [folders])
-  const childFolders = useMemo(() => {
-    const m = new Map<string | null, Folder[]>()
-    for (const f of folders) {
-      const p = f.parentId != null && byId.has(f.parentId) ? f.parentId : null
-      const list = m.get(p) ?? []
-      list.push(f)
-      m.set(p, list)
-    }
+  const groups = useMemo(() => groupByWorkspace(live, props.known), [live, props.known])
+  /** Group a document is shown in (unknown workspaces fall into 未归类). */
+  const groupOf = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const g of groups) for (const d of g.docs) m.set(d.id, gKey(g.id))
     return m
-  }, [folders, byId])
+  }, [groups])
   const favorites = live.filter(d => d.favorite)
-  const loose = live.filter(d => d.folderId === null || !byId.has(d.folderId))
 
   // Alt+1…9 opens the n-th favorite.
   useEffect(() => {
@@ -121,40 +113,34 @@ export function Sidebar(props: SidebarProps): ReactNode {
     return () => window.removeEventListener('keydown', key)
   }, [favorites])
 
-  const toggleFolder = (id: string): void => setOpenFolders(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const toggleGroup = (k: string): void => setClosed(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const openGroup = (k: string): void => setClosed(s => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n })
 
-  const newFolder = async (parentId: string | null): Promise<void> => {
-    const name = await dialogs.prompt({ title: parentId === null ? '新建文件夹' : '新建子文件夹', placeholder: '文件夹名称', ok: '创建' })
-    if (name === null || name.trim().length === 0) return
-    try {
-      const f = await api.createFolder(name.trim(), parentId)
-      if (lib !== null) props.onChanged({ ...lib, folders: [...lib.folders, f] })
-      setOpenFolders(s => { const n = new Set(s).add(f.id); if (parentId !== null) n.add(parentId); return n })
-    } catch (error) { dialogs.toast('创建失败：' + errText(error)) }
-  }
-
-  const newFromMarkdown = async (folderId: string | null): Promise<void> => {
+  const newFromMarkdown = async (where: WorkspaceTarget | undefined): Promise<void> => {
     const md = await dialogs.prompt({ title: '从 Markdown 新建', message: '粘贴 Markdown 列表或标题（# 标题、- 要点、缩进表示层级）。按 Ctrl+Enter 创建。', placeholder: '# 2027 个人规划\n- 学习\n  - Rust', ok: '创建', multiline: true })
     if (md === null || md.trim().length === 0) return
-    props.onCreate(folderId, md)
+    props.onCreate(where, md)
   }
 
-  const createMenu = (x: number, y: number, folderId: string | null): void => {
+  const createMenu = (x: number, y: number, g?: WorkspaceGroup): void => {
+    const where = g === undefined ? undefined : target(g)
     props.onMenu({ x, y, items: [
-      { label: '空白文档', onSelect: () => props.onCreate(folderId) },
-      { label: '从粘贴的 Markdown 新建…', onSelect: () => void newFromMarkdown(folderId) },
+      ...(g !== undefined ? [{ kind: 'label', label: '新建到「' + g.name + '」' } as MenuEntry] : []),
+      { label: '空白文档', onSelect: () => props.onCreate(where) },
+      { label: '从粘贴的 Markdown 新建…', onSelect: () => void newFromMarkdown(where) },
       { label: '导入文件（.md / .opml）…', onSelect: props.onImport },
-      { kind: 'sep' },
-      { label: folderId === null ? '新建文件夹' : '新建子文件夹', onSelect: () => void newFolder(folderId) },
+      // From the header: empty workspaces are not listed, so offer them here.
+      ...(g === undefined && groups.some(w => w.id !== null) ? [
+        { kind: 'sep' } as MenuEntry,
+        { kind: 'label', label: '新建空白文档到工作区' } as MenuEntry,
+        ...groups.filter(w => w.id !== null).map<MenuEntry>(w => ({ label: w.name + (w.docs.length === 0 ? '（空）' : ''), onSelect: () => { openGroup(gKey(w.id)); props.onCreate(target(w)) } })),
+      ] : []),
     ] })
   }
 
-  const moveFolder = async (id: string, parentId: string | null): Promise<void> => {
-    try { await api.moveFolder(id, parentId); await props.onRefresh(); if (parentId !== null) setOpenFolders(s => new Set(s).add(parentId)) } catch (error) { dialogs.toast('移动失败：' + errText(error)) }
-  }
-  const moveDoc = async (id: string, folderId: string | null): Promise<void> => {
-    await props.onPatch(id, { folderId })
-    if (folderId !== null) setOpenFolders(s => new Set(s).add(folderId))
+  const moveDoc = async (id: string, g: WorkspaceGroup): Promise<void> => {
+    await props.onPatch(id, target(g))
+    openGroup(gKey(g.id))
   }
 
   /** `rk` = row key (prefix + id): a favourite doc is listed twice, only the clicked row renames. */
@@ -168,70 +154,43 @@ export function Sidebar(props: SidebarProps): ReactNode {
       { label: '重命名', shortcut: 'F2', onSelect: () => setRenaming(rk) },
       { label: m.favorite ? '取消收藏' : '收藏', onSelect: () => void props.onPatch(m.id, { favorite: !m.favorite }) },
       { kind: 'sep' },
-      { kind: 'label', label: '移动到' },
-      { label: (m.folderId === null ? '✓ ' : '') + '未分类', disabled: m.folderId === null, onSelect: () => void moveDoc(m.id, null) },
-      ...folders.map<MenuEntry>(f => ({ label: (m.folderId === f.id ? '✓ ' : '') + folderPath(byId, f.id), disabled: m.folderId === f.id, onSelect: () => void moveDoc(m.id, f.id) })),
+      { kind: 'label', label: '移动到工作区' },
+      ...groups.map<MenuEntry>(g => {
+        const here = groupOf.get(m.id) === gKey(g.id)
+        return { label: (here ? '✓ ' : '') + g.name, disabled: here, onSelect: () => void moveDoc(m.id, g) }
+      }),
       { kind: 'sep' },
       { label: '移到回收站', shortcut: 'Delete', danger: true, onSelect: () => void props.onTrash(m.id) },
     ]
     props.onMenu({ x, y, items })
   }
 
-  const folderMenu = (f: Folder, x: number, y: number): void => {
-    const blocked = folderSubtree(folders, f.id)
-    const parent = f.parentId ?? null
-    props.onMenu({ x, y, items: [
-      { label: '在此新建文档…', onSelect: () => createMenu(x, y, f.id) },
-      { label: '新建子文件夹', onSelect: () => void newFolder(f.id) },
-      { label: '重命名', onSelect: async () => {
-        const next = await dialogs.prompt({ title: '重命名文件夹', value: f.name, ok: '保存' })
-        if (next === null || next.trim().length === 0 || next.trim() === f.name) return
-        try { const r = await api.renameFolder(f.id, next.trim()); if (lib !== null) props.onChanged({ ...lib, folders: lib.folders.map(x2 => (x2.id === f.id ? r : x2)) }) } catch (error) { dialogs.toast('重命名失败：' + errText(error)) }
-      } },
-      { kind: 'sep' },
-      { kind: 'label', label: '移动到' },
-      { label: (parent === null ? '✓ ' : '') + '顶层', disabled: parent === null, onSelect: () => void moveFolder(f.id, null) },
-      ...folders.filter(o => !blocked.has(o.id)).map<MenuEntry>(o => ({ label: (parent === o.id ? '✓ ' : '') + folderPath(byId, o.id), disabled: parent === o.id, onSelect: () => void moveFolder(f.id, o.id) })),
-      { kind: 'sep' },
-      { label: '删除文件夹', danger: true, onSelect: async () => {
-        const where = parent === null ? '「未分类」和顶层' : '上一级文件夹「' + (byId.get(parent)?.name ?? '') + '」'
-        const ok = await dialogs.confirm({ title: '删除文件夹「' + f.name + '」？', message: '里面的文档和子文件夹不会被删除，会移到' + where + '。', ok: '删除', danger: true })
-        if (!ok) return
-        try { await api.deleteFolder(f.id); await props.onRefresh() } catch (error) { dialogs.toast('删除失败：' + errText(error)) }
-      } },
-    ] })
-  }
-
-  // ---------- drag & drop ----------
+  // ---------- drag & drop (documents onto a workspace group) ----------
   const startDrag = (e: DragEvent, d: NonNullable<Drag>, label: string): void => {
     drag.current = d
     e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData(d.kind === 'doc' ? DRAG_DOC : DRAG_FOLDER, d.id)
+    e.dataTransfer.setData(DRAG_DOC, d.id)
     e.dataTransfer.setData('text/plain', label)
   }
-  const canDrop = (target: string | null): boolean => {
+  const canDrop = (g: WorkspaceGroup): boolean => {
     const d = drag.current
-    if (d === null) return false
-    if (d.kind === 'doc') {
-      const m = lib?.docs.find(x => x.id === d.id)
-      return m !== undefined && m.folderId !== target
-    }
-    if (target !== null && folderSubtree(folders, d.id).has(target)) return false
-    return (byId.get(d.id)?.parentId ?? null) !== target
+    return d !== null && groupOf.has(d.id) && groupOf.get(d.id) !== gKey(g.id)
   }
-  const dropProps = (target: string | null, key: string) => ({
-    onDragOver: (e: DragEvent) => { if (!canDrop(target)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
-    onDragLeave: (e: DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setOver(o => (o === key ? null : o)) },
-    onDrop: (e: DragEvent) => {
-      const d = drag.current
-      drag.current = null
-      setOver(null)
-      if (d === null || !canDrop(target)) return
-      e.preventDefault()
-      if (d.kind === 'doc') void moveDoc(d.id, target)
-      else void moveFolder(d.id, target)
-    },
-  })
+  const dropProps = (g: WorkspaceGroup) => {
+    const key = 'g:' + gKey(g.id)
+    return {
+      onDragOver: (e: DragEvent) => { if (!canDrop(g)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
+      onDragLeave: (e: DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setOver(o => (o === key ? null : o)) },
+      onDrop: (e: DragEvent) => {
+        const d = drag.current
+        drag.current = null
+        setOver(null)
+        if (d === null || !canDrop(g)) return
+        e.preventDefault()
+        void moveDoc(d.id, g)
+      },
+    }
+  }
   const endDrag = (): void => { drag.current = null; setOver(null) }
 
   const moreButton = (open: (x: number, y: number) => void): ReactNode => (
@@ -279,40 +238,32 @@ export function Sidebar(props: SidebarProps): ReactNode {
   )
   }
 
-  const folderNode = (f: Folder, depth: number, seen: Set<string>): ReactNode => {
-    if (seen.has(f.id)) return null
-    seen.add(f.id)
-    const docs = live.filter(d => d.folderId === f.id)
-    const subs = childFolders.get(f.id) ?? []
-    const open = openFolders.has(f.id)
-    const empty = docs.length === 0 && subs.length === 0
+  const groupMenu = (g: WorkspaceGroup, x: number, y: number): void => createMenu(x, y, g)
+
+  const groupNode = (g: WorkspaceGroup): ReactNode => {
+    const k = gKey(g.id)
+    const open = !closed.has(k)
+    const docs = sortDocs(g.docs, sort)
     return (
-      <div key={f.id} role="group">
-        <div className={'mm-row mm-folder-row' + (over === 'f:' + f.id ? ' mm-drop-into' : '')} role="button" tabIndex={0} aria-expanded={open} draggable
-          style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() => toggleFolder(f.id)}
+      <div key={'g:' + k} role="group" aria-label={g.name} {...dropProps(g)}>
+        <div className={'mm-row mm-folder-row mm-ws-row' + (over === 'g:' + k ? ' mm-drop-into' : '') + (g.id === null ? ' mm-ws-loose' : '')} role="button" tabIndex={0} aria-expanded={open}
+          title={g.id === null ? '没有归属工作区的文档' : '工作区「' + g.name + '」'}
+          onClick={() => toggleGroup(k)}
           onKeyDown={e => {
-            if (rowKeys(e, (x, y) => folderMenu(f, x, y))) return
-            if (e.key === 'Enter') toggleFolder(f.id)
-            else if (e.key === 'ArrowRight' && !open) toggleFolder(f.id)
-            else if (e.key === 'ArrowLeft' && open) toggleFolder(f.id)
+            if (rowKeys(e, (x, y) => groupMenu(g, x, y))) return
+            if (e.key === 'Enter') toggleGroup(k)
+            else if (e.key === 'ArrowRight' && !open) toggleGroup(k)
+            else if (e.key === 'ArrowLeft' && open) toggleGroup(k)
           }}
-          onDragStart={e => startDrag(e, { kind: 'folder', id: f.id }, f.name)} onDragEnd={endDrag}
-          {...dropProps(f.id, 'f:' + f.id)}
-          onContextMenu={e => { e.preventDefault(); folderMenu(f, e.clientX, e.clientY) }}>
+          onContextMenu={e => { e.preventDefault(); groupMenu(g, e.clientX, e.clientY) }}>
           <span className="mm-folder-arrow" style={{ transform: open ? 'none' : 'rotate(-90deg)' }}><Icon name="chevron" size={12} /></span>
           <Icon name="folder" size={14} />
-          <span className="mm-row-title">{f.name}</span>
+          <span className="mm-row-title">{g.name}</span>
           <span className="mm-row-time">{docs.length}</span>
-          {moreButton((x, y) => folderMenu(f, x, y))}
+          <button type="button" className="mm-row-more" aria-label={'在「' + g.name + '」新建文档'} title="在此新建文档" tabIndex={-1}
+            onClick={(e: MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); createMenu(r.left, r.bottom + 2, g) }}><Icon name="plus" size={14} /></button>
         </div>
-        {open ? (
-          <>
-            {subs.map(s => folderNode(s, depth + 1, seen))}
-            {docs.map(m => docRow(m, depth + 1, 'f-'))}
-            {empty ? <div className="mm-empty" style={{ paddingLeft: 22 + (depth + 1) * 14 }}>空文件夹</div> : null}
-          </>
-        ) : null}
+        {open ? (docs.length > 0 ? docs.map(m => docRow(m, 1, 'w-')) : <div className="mm-empty" style={{ paddingLeft: 36 }}>{g.id === null ? '没有未归类的文档' : '还没有文档，可把文档拖到这里'}</div>) : null}
       </div>
     )
   }
@@ -343,13 +294,13 @@ export function Sidebar(props: SidebarProps): ReactNode {
   }
   const daysLeft = (m: DocMeta): number => Math.max(0, Math.ceil(((m.trashedAt ?? 0) + TRASH_DAYS * 86_400_000 - Date.now()) / 86_400_000))
 
-  const top = childFolders.get(null) ?? []
+  // Only groups that hold documents are listed; an empty workspace appears once a document is created in or moved to it.
+  const shown = groups.filter(g => g.docs.length > 0)
   return (
     <aside className="mm-side" aria-label="文档">
       <div className="mm-side-head">
         <span className="mm-side-title">思维导图</span>
-        <button type="button" className="mm-icon-btn" title="新建文件夹" aria-label="新建文件夹" onClick={() => void newFolder(null)}><Icon name="folderPlus" /></button>
-        <button type="button" className="mm-icon-btn" title="新建文档" aria-label="新建文档" aria-haspopup="menu" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); createMenu(r.left, r.bottom + 4, null) }}><Icon name="plus" /></button>
+        <button type="button" className="mm-icon-btn" title="新建文档" aria-label="新建文档" aria-haspopup="menu" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); createMenu(r.left, r.bottom + 4) }}><Icon name="plus" /></button>
       </div>
       <label className="mm-search">
         <Icon name="search" size={14} />
@@ -375,18 +326,12 @@ export function Sidebar(props: SidebarProps): ReactNode {
                 {favorites.map((m, i) => docRow(m, 0, 'fav-', i))}
               </div>
             ) : null}
-            {top.length > 0 ? (
-              <div className="mm-section">
-                <div className={'mm-section-head' + (over === 'top' ? ' mm-drop-into' : '')} {...dropProps(null, 'top')}>文件夹</div>
-                {(() => { const seen = new Set<string>(); return top.map(f => folderNode(f, 0, seen)) })()}
-              </div>
-            ) : null}
-            <div className="mm-section" {...dropProps(null, 'loose')}>
-              <div className={'mm-section-head' + (over === 'loose' ? ' mm-drop-into' : '')}>
-                <span className="mm-grow">{top.length > 0 ? '未分类' : '文档'}</span>
+            <div className="mm-section">
+              <div className="mm-section-head">
+                <span className="mm-grow">工作区</span>
                 <button type="button" className="mm-sort-btn" aria-label={'排序：' + SORT_LABEL[sort]} aria-haspopup="menu" onClick={sortMenu}>{SORT_LABEL[sort]}<Icon name="chevron" size={10} /></button>
               </div>
-              {loose.length === 0 ? <div className="mm-empty">{live.length === 0 ? '点击右上角 + 新建文档' : '没有未分类的文档'}</div> : loose.map(m => docRow(m, 0, 'd-'))}
+              {shown.length === 0 ? <div className="mm-empty">点击右上角 + 新建文档</div> : shown.map(groupNode)}
             </div>
             {trash.length > 0 ? (
               <div className="mm-section">

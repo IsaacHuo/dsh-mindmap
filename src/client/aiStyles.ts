@@ -34,6 +34,8 @@ export const AI_CSS = [
   '.mm-app.mm-compact .mm-side{display:none}',
   '.mm-app.mm-compact .mm-secondary,.mm-app.mm-compact .mm-statusbar{display:none}',
   '.mm-app.mm-compact .mm-doc-inner{padding-left:12px;padding-right:12px}',
+  '.mm-ws-pick{flex:0 1 150px;min-width:70px;height:26px;margin-left:4px;border:1px solid var(--mm-border);border-radius:6px;background:var(--mm-bg);color:inherit;font:inherit;font-size:12px}',
+  '.mm-ws-row .mm-row-title{font-weight:600}',
   '.mm-doc-pick{flex:0 1 180px;min-width:80px;height:26px;border:1px solid var(--mm-border);border-radius:6px;background:var(--mm-bg);color:inherit;font:inherit;font-size:13px}',
   '.mm-hdr-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;padding:0}',
   '.mm-hdr-btn:hover{background:var(--dsw-bg-hover,rgba(0,0,0,.05))}',

@@ -158,7 +158,7 @@ export function createHandler(storage: MindmapStorage): (req: IncomingMessage, r
           items = parsed.items
           if (title === undefined || title === '') title = parsed.title
         }
-        ok(res, await storage.createDoc({ title, folderId: body.folderId, items }))
+        ok(res, await storage.createDoc({ title, folderId: body.folderId, workspaceId: body.workspaceId, workspaceName: body.workspaceName, items }))
         return
       }
       const action = DOC_ACTION_RE.exec(path)

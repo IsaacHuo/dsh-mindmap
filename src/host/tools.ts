@@ -7,7 +7,7 @@
  * @module dsh-mindmap/host/tools
  */
 import { applyAiOps, AiOpError, nodeRef, parseRef } from '../shared/aiOps.ts'
-import { ancestors, type OutlineDoc } from '../shared/model.ts'
+import { ancestors, type DocMeta, type OutlineDoc } from '../shared/model.ts'
 import { StorageError, type MindmapStorage } from './storage.ts'
 
 export const TOOL_NAME = 'mindmap'
@@ -99,10 +99,10 @@ export async function runMindmapTool(storage: MindmapStorage, argsIn: unknown, c
     switch (args.action) {
       case 'list': {
         const lib = await storage.getLibrary()
-        const folders = new Map(lib.folders.map(f => [f.id, f.name]))
         const docs = lib.docs.filter(d => d.trashedAt === undefined).sort((a, b) => b.updatedAt - a.updatedAt)
-        const rows = docs.map(d => `- ${d.title}  docId ${d.id}${d.folderId !== null ? `  folder ${folders.get(d.folderId) ?? '?'}` : ''}  updated ${new Date(d.updatedAt).toISOString()}`)
-        return { ok: true, text: docs.length === 0 ? 'No documents.' : `${docs.length} document(s):\n${rows.join('\n')}`, data: docs.map(d => ({ id: d.id, title: d.title })) }
+        const ws = (d: DocMeta): string => (d.workspaceId ? `  workspace ${d.workspaceName ?? d.workspaceId}` : '')
+        const rows = docs.map(d => `- ${d.title}  docId ${d.id}${ws(d)}  updated ${new Date(d.updatedAt).toISOString()}`)
+        return { ok: true, text: docs.length === 0 ? 'No documents.' : `${docs.length} document(s):\n${rows.join('\n')}`, data: docs.map(d => ({ id: d.id, title: d.title, workspaceId: d.workspaceId ?? null })) }
       }
       case 'read': {
         const { docId, nodeId } = resolve(args)

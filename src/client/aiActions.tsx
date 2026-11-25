@@ -9,7 +9,7 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { OutlineDoc } from '../shared/model.ts'
 import { bindSession, nodeRef, pendingAi, reviewAi, unbindSession } from '../shared/aiOps.ts'
-import { api } from './api.ts'
+import { api, ApiError } from './api.ts'
 import { reviewMenu } from './ai.ts'
 import { bridge, onBridge, type ChatBridge, type HostBridge } from './bridge.ts'
 import { nodeLabel, nodeQuote, nodeSessionPrompt } from './nodeSession.ts'
@@ -93,7 +93,9 @@ export function useAiActions(input: AiActionsInput): AiActions {
       const sep = info.docsDir.includes('\\') ? '\\' : '/'
       copy(info.docsDir + sep + docId + '.json', '已复制文件路径（仅供只读参考；请让 AI 用 mindmap 工具修改，直接改文件不会留痕）')
     } catch (error) {
-      ref.current.dialogs.toast('获取路径失败：' + errText(error))
+      // An unknown route means the host still runs an older plugin build (new page, old host).
+      const stale = error instanceof ApiError && error.code === 'not_found'
+      ref.current.dialogs.toast(stale ? '获取路径失败：思维导图服务仍是旧版本，请重启 DSH 后再试' : '获取路径失败：' + errText(error))
     }
   }, [copy])
 

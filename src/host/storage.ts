@@ -10,7 +10,7 @@
  */
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { createDoc, ID_RE, itemsDepth, MAX_IMPORT_DEPTH, newId, normalizeTitle, validateDoc, type DocMeta, type Folder, type Library, type OutlineDoc, type TreeItem } from '../shared/model.ts'
+import { createDoc, ID_RE, itemsDepth, MAX_IMPORT_DEPTH, MAX_TITLE, newId, normalizeTitle, validateDoc, WORKSPACE_ID_RE, type DocMeta, type Folder, type Library, type OutlineDoc, type TreeItem } from '../shared/model.ts'
 import { indexDoc, searchIndex, type DocIndex, type SearchHit } from '../shared/search.ts'
 import type { ApiErrorCode, BackupFile, BackupInfo, BackupKind, QuarantinedFile } from '../shared/api.ts'
 
@@ -123,6 +123,9 @@ function sanitizeMeta(raw: unknown): DocMeta | null {
     updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : 0,
   }
   if (typeof m.trashedAt === 'number') meta.trashedAt = m.trashedAt
+  if (m.workspaceId === null) meta.workspaceId = null
+  else if (typeof m.workspaceId === 'string' && WORKSPACE_ID_RE.test(m.workspaceId)) meta.workspaceId = m.workspaceId
+  if (typeof m.workspaceName === 'string' && m.workspaceName.length > 0) meta.workspaceName = m.workspaceName.slice(0, MAX_TITLE)
   return meta
 }
 
@@ -412,6 +415,16 @@ export class MindmapStorage {
     return folderId
   }
 
+  /** Apply a workspace assignment (null = 未归类); undefined leaves it unchanged. */
+  private assignWorkspace(meta: DocMeta, workspaceId: unknown, workspaceName: unknown): void {
+    if (workspaceId === undefined) return
+    if (workspaceId === null) { meta.workspaceId = null; delete meta.workspaceName; return }
+    if (typeof workspaceId !== 'string' || !WORKSPACE_ID_RE.test(workspaceId)) throw new StorageError('invalid_input', '工作区 id 无效')
+    meta.workspaceId = workspaceId
+    if (typeof workspaceName === 'string' && workspaceName.trim().length > 0) meta.workspaceName = workspaceName.trim().slice(0, MAX_TITLE)
+    else delete meta.workspaceName
+  }
+
   /** A copy of the library index. */
   async getLibrary(): Promise<Library> {
     await this.ready()
@@ -423,7 +436,7 @@ export class MindmapStorage {
     return this.serial(() => this.loadDoc(id))
   }
 
-  createDoc(input: { title?: unknown; folderId?: unknown; items?: TreeItem[] }): Promise<{ meta: DocMeta; doc: OutlineDoc }> {
+  createDoc(input: { title?: unknown; folderId?: unknown; workspaceId?: unknown; workspaceName?: unknown; items?: TreeItem[] }): Promise<{ meta: DocMeta; doc: OutlineDoc }> {
     return this.serial(async () => {
       const folderId = this.checkFolder(input.folderId)
       const items = input.items ?? []
@@ -432,7 +445,8 @@ export class MindmapStorage {
       const now = this.now()
       const doc = createDoc(normalizeTitle(input.title), now, items)
       await this.writeDoc(doc)
-      const meta: DocMeta = { id: doc.id, title: doc.title, folderId, favorite: false, createdAt: now, updatedAt: now }
+      const meta: DocMeta = { id: doc.id, title: doc.title, folderId, workspaceId: null, favorite: false, createdAt: now, updatedAt: now }
+      this.assignWorkspace(meta, input.workspaceId, input.workspaceName)
       this.library.docs.push(meta)
       await this.writeLibrary()
       return { meta: { ...meta }, doc }
@@ -463,11 +477,12 @@ export class MindmapStorage {
   }
 
   /** Rename / move to folder / (un)favorite. A rename also rewrites the document title. */
-  patchMeta(id: string, body: { title?: unknown; folderId?: unknown; favorite?: unknown }): Promise<{ meta: DocMeta; doc?: OutlineDoc }> {
+  patchMeta(id: string, body: { title?: unknown; folderId?: unknown; workspaceId?: unknown; workspaceName?: unknown; favorite?: unknown }): Promise<{ meta: DocMeta; doc?: OutlineDoc }> {
     return this.serial(async () => {
       const meta = this.meta(id)
       let doc: OutlineDoc | undefined
       if (body.folderId !== undefined) meta.folderId = this.checkFolder(body.folderId)
+      this.assignWorkspace(meta, body.workspaceId, body.workspaceName)
       if (body.favorite !== undefined) meta.favorite = body.favorite === true
       if (body.title !== undefined) {
         const title = normalizeTitle(body.title)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+工作区 (workspaces)
+- Folders are replaced by DSH workspaces: the sidebar groups documents by workspace (plus 未归类), every workspace is a drop target, and the document menu has 移动到工作区. Folder create / rename / nesting is gone.
+- Toolbar: a workspace picker next to 全部折叠 changes the open document's workspace.
+- New documents go to the conversation's workspace (right sidebar) or the open document's workspace.
+- One-time migration: documents in a folder whose name (or an ancestor's) matches a workspace move to it, the rest go to 未归类. Folder data stays in library.json; documents are still stored as JSON in the plugin data directory.
+- Agent tool `list` shows each document's workspace.
+
+Fixes
+- 复制文档文件路径 against a host still running an older build now says to restart DSH instead of 「未知路径」.
+
 ## 0.3.0
 
 AI and sessions

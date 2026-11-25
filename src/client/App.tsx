@@ -14,7 +14,9 @@ import type { BackupInfo, BackupKind, QuarantinedFile } from '../shared/api.ts'
 import { api } from './api.ts'
 import { onBroadcast, onServerChange } from './sync.ts'
 import { ROUTE_PREFIX } from '../shared/api.ts'
-import { PendingBadge, useAiActions } from './aiActions.tsx'
+import { PendingBadge, useAiActions, useBridge } from './aiActions.tsx'
+import { useWorkspaces } from './useWorkspaces.ts'
+import { groupByWorkspace, migrationPatches, UNASSIGNED, type Workspace } from './workspaces.ts'
 import type { BesideTarget, ChatBridge } from './bridge.ts'
 import { countTree } from './docUtils.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -164,9 +166,48 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
     setActiveId(id)
   }, [activeId, doc, reveal])
 
-  const createDoc = useCallback(async (body: { folderId?: string | null; markdown?: string; opml?: string; title?: string } = {}) => {
+  // ---------- workspaces ----------
+  const host = useBridge()
+  const wsList = useWorkspaces()
+  // null = DSH gives no live list (harness / old DSH): trust the stored names.
+  const known: Workspace[] | null = wsList !== null && wsList.ready ? wsList.items : null
+  const wsRef = useRef({ known, host, library: null as Library | null })
+  wsRef.current = { known, host, library }
+  /** Workspace for a new document: the conversation's, else the one on screen, else the open document's. */
+  const defaultWorkspace = useCallback((): { workspaceId: string | null; workspaceName?: string } => {
+    const { known: k, host: h, library: lib } = wsRef.current
+    const fromSession = h.workspaceOf?.(compact?.chat?.sessionId) ?? (compact?.chat !== undefined ? h.workspaceOf?.() : undefined)
+    const id = fromSession ?? lib?.docs.find(d => d.id === activeIdRef.current)?.workspaceId ?? null
+    if (typeof id !== 'string') return { workspaceId: null }
+    const name = k?.find(w => w.id === id)?.name ?? lib?.docs.find(d => d.workspaceId === id)?.workspaceName
+    return name === undefined ? { workspaceId: id } : { workspaceId: id, workspaceName: name }
+  }, [compact])
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
+
+  // One-time migration of ≤0.3 folders to same-named workspaces (needs the live list).
+  const migrated = useRef(false)
+  useEffect(() => {
+    if (migrated.current || library === null || known === null) return
+    const patches = migrationPatches(library, known)
+    migrated.current = true
+    if (patches.length === 0) return
+    void (async () => {
+      let moved = 0
+      for (const p of patches) {
+        try {
+          const r = await api.patchMeta(p.id, p.workspaceName === undefined ? { workspaceId: p.workspaceId } : { workspaceId: p.workspaceId, workspaceName: p.workspaceName })
+          if (p.workspaceId !== null) moved++
+          setLibrary(lib => (lib === null ? lib : { ...lib, docs: lib.docs.map(d => (d.id === p.id ? r.meta : d)) }))
+        } catch { /* retried next load */ }
+      }
+      if (moved > 0) dialogs.toast('已按同名把 ' + moved + ' 篇文档归入工作区，其余在「' + UNASSIGNED + '」')
+    })()
+  }, [library, known, dialogs])
+
+  const createDoc = useCallback(async (body: { workspaceId?: string | null; workspaceName?: string; markdown?: string; opml?: string; title?: string } = {}) => {
     try {
-      const r = await api.createDoc(body)
+      const r = await api.createDoc(body.workspaceId === undefined ? { ...body, ...defaultWorkspace() } : body)
       setLibrary(lib => (lib === null ? lib : { ...lib, docs: [...lib.docs, r.meta] }))
       setActiveId(r.doc.id)
       setView('outline')
@@ -176,9 +217,9 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
       dialogs.toast('新建失败：' + errText(error))
       return null
     }
-  }, [dialogs])
+  }, [dialogs, defaultWorkspace])
 
-  const patchMeta = useCallback(async (id: string, body: { title?: string; folderId?: string | null; favorite?: boolean }) => {
+  const patchMeta = useCallback(async (id: string, body: { title?: string; favorite?: boolean; workspaceId?: string | null; workspaceName?: string }) => {
     // Renaming the open document goes through the editor so it cannot race the autosave.
     if (body.title !== undefined && doc !== null && doc.id === id) {
       const title = body.title.trim()
@@ -215,7 +256,7 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
     if (mine === null) return
     const meta = library?.docs.find(d => d.id === mine.id)
     try {
-      const r = await api.createDoc({ copy: mine, title: mine.title + ' 副本', folderId: meta?.folderId ?? null })
+      const r = await api.createDoc({ copy: mine, title: mine.title + ' 副本', workspaceId: meta?.workspaceId ?? null, ...(meta?.workspaceName !== undefined ? { workspaceName: meta.workspaceName } : {}) })
       state.resolveConflict('theirs')
       setLibrary(lib => (lib === null ? lib : { ...lib, docs: [...lib.docs, r.meta] }))
       setActiveId(r.meta.id)
@@ -317,6 +358,14 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
 
   const statusText = state.status === 'saved' ? '已保存' : state.status === 'saving' ? '保存中…' : state.status === 'dirty' ? '未保存' : state.status === 'conflict' ? '保存冲突' : '保存失败'
   const meta = library?.docs.find(d => d.id === activeId)
+  const liveDocs = useMemo(() => (library?.docs ?? []).filter(d => d.trashedAt === undefined), [library])
+  const wsGroups = useMemo(() => {
+    const groups = groupByWorkspace(liveDocs, known)
+    // A stored workspace not in the live list stays selectable for the open document.
+    const cur = meta?.workspaceId
+    if (typeof cur === 'string' && !groups.some(g => g.id === cur)) groups.splice(groups.length - 1, 0, { id: cur, name: (meta?.workspaceName ?? cur) + '（不可用）', docs: [] })
+    return groups
+  }, [liveDocs, known, meta])
 
   // Keys typed while focus has fallen back to <body> (after clicking empty space)
   // still reach the app's global shortcuts.
@@ -336,7 +385,7 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
   return (
     <div ref={appRef} className={'mm-app' + (sideOpen ? ' mm-side-open' : '') + (compact !== undefined ? ' mm-compact' : '')} onKeyDown={onKeyDown}>
       <div className="mm-scrim" onClick={() => setSideOpen(false)} />
-      {compact !== undefined ? null : <Sidebar library={library} error={libError} activeId={activeId} onOpen={openDoc} onCreate={(folderId, markdown) => void createDoc(markdown === undefined ? { folderId } : { folderId, markdown })}
+      {compact !== undefined ? null : <Sidebar library={library} error={libError} activeId={activeId} known={known} onOpen={openDoc} onCreate={(where, markdown) => void createDoc({ ...(where ?? {}), ...(markdown !== undefined ? { markdown } : {}) })}
         onPatch={patchMeta} onTrash={trashDoc} onRefresh={refreshLibrary} onMenu={setMenu} onImport={() => fileInput.current?.click()} onBackups={openBackups}
         onChanged={setLibrary} />}
       <input ref={fileInput} type="file" accept=".md,.markdown,.txt,.opml,.xml" multiple hidden onChange={e => { void importFiles(e.target.files); e.target.value = '' }} />
@@ -359,6 +408,16 @@ function Shell(props: { compact?: CompactOptions | undefined }): ReactNode {
               <button type="button" className="mm-icon-btn" title="重做 (Ctrl+Shift+Z)" aria-label="重做" disabled={!state.canRedo} onMouseDown={e => e.preventDefault()} onClick={state.redo}><Icon name="redo" /></button>
               <button type="button" className="mm-icon-btn mm-secondary" title="全部展开" aria-label="全部展开" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, false), { noHistory: true })}><Icon name="expand" /></button>
               <button type="button" className="mm-icon-btn mm-secondary" title="全部折叠" aria-label="全部折叠" onClick={() => effectiveRoot !== null && state.apply(ops.setAllCollapsed(doc, effectiveRoot, true), { noHistory: true })}><Icon name="collapse" /></button>
+              {meta !== undefined ? (
+                <select className="mm-ws-pick mm-secondary" title="所属工作区" aria-label="所属工作区" value={typeof meta.workspaceId === 'string' ? meta.workspaceId : ''}
+                  onChange={e => {
+                    const v = e.target.value
+                    const g = wsGroups.find(x => x.id === v)
+                    void patchMeta(meta.id, v.length === 0 ? { workspaceId: null } : { workspaceId: v, workspaceName: g?.name ?? v })
+                  }}>
+                  {wsGroups.map(g => <option key={g.id ?? ''} value={g.id ?? ''}>{g.name}</option>)}
+                </select>
+              ) : null}
               <span className="mm-grow" />
               <PendingBadge count={ai.pending} onOpen={ai.pendingMenu} />
               <span className={'mm-status' + (state.status === 'error' || state.status === 'conflict' ? ' mm-err' : '')} title={state.statusMessage ?? undefined} aria-live="polite">{statusText}</span>

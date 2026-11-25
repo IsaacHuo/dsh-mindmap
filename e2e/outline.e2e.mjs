@@ -371,8 +371,18 @@ try {
     await page.setViewport({ width: 1280, height: 800 }); await sleep(200)
   })
 
-  await step('v0.2.2 new-folder dialog is opaque and themed inside .mm-app', async () => {
-    await page.click('button[aria-label="新建文件夹"]')
+  await step('v0.4.0 sidebar groups by workspace, toolbar has workspace picker', async () => {
+    const heads = await page.$$eval('.mm-ws-row .mm-row-title', els => els.map(e => e.textContent))
+    assert.ok(heads.includes('未归类'), 'groups ' + heads.join(','))
+    assert.equal(await page.$('button[aria-label="新建文件夹"]'), null, 'folder button removed')
+    const opts = await page.$$eval('.mm-ws-pick option', els => els.map(e => e.textContent))
+    assert.ok(opts.includes('未归类'), 'picker options ' + opts.join(','))
+  })
+
+  await step('v0.2.2 new-from-markdown dialog is opaque and themed inside .mm-app', async () => {
+    await page.click('button[aria-label="新建文档"]')
+    await page.waitForSelector('[role=menuitem]', { timeout: 3000 })
+    await clickText('[role=menuitem]', '从粘贴的 Markdown 新建…')
     await page.waitForSelector('.mm-modal', { timeout: 3000 })
     const s = await page.$eval('.mm-modal', el => { const cs = getComputedStyle(el); return { inApp: el.closest('.mm-app') !== null, bg: cs.backgroundColor, border: cs.borderTopWidth, pos: getComputedStyle(el.parentElement).position } })
     await page.screenshot({ path: join(tmp, 'e2e-folder-dialog.png') })
